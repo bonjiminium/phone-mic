@@ -1,0 +1,42 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'net.bonjiminium.phonemic'
+    compileSdk 36
+    defaultConfig {
+        applicationId 'net.bonjiminium.phonemic.spike'
+        minSdk 30
+        targetSdk 36
+        versionCode 1
+        versionName '0.1-spike'
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    sourceSets.main.assets.srcDir(layout.buildDirectory.dir('private-assets').get().asFile)
+}
+
+def prepareConfig = tasks.register('preparePrivateConfig', Copy) {
+    from(rootProject.file('../.local/android-config.json'))
+    into(layout.buildDirectory.dir('private-assets'))
+    rename { 'connection.json' }
+    doFirst {
+        if (!rootProject.file('../.local/android-config.json').exists()) {
+            throw new GradleException('Run android/build.sh to generate private pairing config.')
+        }
+    }
+}
+tasks.named('preBuild').configure { dependsOn prepareConfig }
+tasks.withType(Test).configureEach {
+    def config = providers.environmentVariable('PHONE_MIC_RECEIVER_TEST_CONFIG')
+    inputs.property('receiverIntegration', config.orElse('disabled'))
+    if (config.isPresent()) inputs.file(config.get())
+}
+
+dependencies {
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'com.squareup.okhttp3:mockwebserver:4.12.0'
+    testImplementation 'com.squareup.okhttp3:okhttp-tls:4.12.0'
+}

@@ -2,3 +2,9 @@
 __pycache__/
 vendor/
 .local/
+android/.gradle/
+android/**/build/
+android/local.properties
+*.apk
+*.jks
+*.keystore

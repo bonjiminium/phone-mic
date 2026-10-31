@@ -5,6 +5,11 @@ const status = document.querySelector('#status');
 const stats = document.querySelector('#stats');
 const level = document.querySelector('#level');
 const token = location.hash.slice(1);
+if (token) {
+  const android = document.querySelector('#android');
+  android.href = `/android.apk?token=${encodeURIComponent(token)}`;
+  android.hidden = false;
+}
 let current = null;
 
 async function stop(message = 'Stopped') {

@@ -1,5 +1,8 @@
 import asyncio
 import unittest
+import tempfile
+from pathlib import Path
+from unittest.mock import patch
 
 from aiohttp import WSServerHandshakeError, WSMsgType
 from aiohttp.test_utils import TestClient, TestServer
@@ -25,6 +28,22 @@ class ReceiverTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status, 401)
         response = await self.client.get('/status', headers={'Authorization': 'Bearer test-secret'})
         self.assertEqual(response.status, 200)
+
+    async def test_apk_download_requires_token_and_serves_only_private_artifact(self):
+        response = await self.client.get('/android.apk')
+        self.assertEqual(response.status, 401)
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            with patch('receiver.ROOT', root):
+                response = await self.client.get('/android.apk?token=test-secret')
+                self.assertEqual(response.status, 404)
+                (root / '.local').mkdir()
+                (root / '.local' / 'phone-mic-debug.apk').write_bytes(b'test-apk')
+                response = await self.client.get('/android.apk?token=test-secret')
+                self.assertEqual(response.status, 200)
+                self.assertEqual(await response.read(), b'test-apk')
+                self.assertEqual(response.headers['Cache-Control'], 'no-store')
+                self.assertEqual(response.headers['Content-Type'], 'application/vnd.android.package-archive')
 
     async def test_websocket_requires_token(self):
         with self.assertRaises(WSServerHandshakeError) as error:

@@ -28,14 +28,27 @@ class Receiver:
         self.stream = None
 
     def authorized(self, request):
-        # Query tokens are only used on the encrypted WS endpoint. No access log.
-        value = request.query.get('token', '') if request.path == '/audio' else request.headers.get('Authorization', '').removeprefix('Bearer ')
+        # Query tokens are used only for encrypted WS/APK downloads; never logged.
+        value = request.query.get('token', '') if request.path in ('/audio', '/android.apk') else request.headers.get('Authorization', '').removeprefix('Bearer ')
         return hmac.compare_digest(value.encode('utf-8'), self.token.encode('utf-8'))
 
     async def status(self, request):
         if not self.authorized(request):
             raise web.HTTPUnauthorized()
         return web.json_response(dict(connected=self.active is not None, **self.buffer.stats()))
+
+    async def apk(self, request):
+        if not self.authorized(request):
+            raise web.HTTPUnauthorized()
+        artifact = ROOT / '.local' / 'phone-mic-debug.apk'
+        if not artifact.is_file():
+            raise web.HTTPNotFound(text='Android spike has not been built yet')
+        return web.FileResponse(artifact, headers={
+            'Content-Type': 'application/vnd.android.package-archive',
+            'Content-Disposition': 'attachment; filename="phone-mic-spike.apk"',
+            'Cache-Control': 'no-store',
+            'X-Content-Type-Options': 'nosniff',
+        })
 
     async def audio(self, request):
         if not self.authorized(request):
@@ -127,6 +140,7 @@ def application(receiver):
         app.router.add_get(path, page)
     app.router.add_get('/audio', receiver.audio)
     app.router.add_get('/status', receiver.status)
+    app.router.add_get('/android.apk', receiver.apk)
     app.cleanup_ctx.append(receiver.lifetime)
     app.on_shutdown.append(receiver.shutdown)
     return app
@@ -134,6 +148,11 @@ def application(receiver):
 
 async def serve(args):
     token = secrets.token_urlsafe(24)
+    if args.reuse_session:
+        previous = json.loads((ROOT / '.local' / 'connection.json').read_text())
+        if previous['host'] != args.host or previous['port'] != args.port:
+            raise ValueError('Cannot reuse a session on a different host/port')
+        token = previous['token']
     tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     tls.minimum_version = ssl.TLSVersion.TLSv1_2
     tls.load_cert_chain(ROOT / '.local' / 'server.crt', ROOT / '.local' / 'server.key')
@@ -173,6 +192,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--host', required=True, help='Windows LAN IPv4; binds only this interface')
     parser.add_argument('--port', type=int, default=8765)
+    parser.add_argument('--reuse-session', action='store_true', help='Explicitly reuse the previous local token (for testing a paired private APK)')
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
     try:

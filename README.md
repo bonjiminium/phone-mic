@@ -1,13 +1,15 @@
 # Phone mic
 
 Android microphone → local Wi-Fi → Windows → **CABLE Output** microphone.
-A browser prototype first; a native Android foreground-service app comes later.
-Project files live in `~/phone-mic`, including the Windows Python environment.
+The browser prototype is verified. A minimal [native Android spike](android/README.md)
+now has user-verified live dictation and continued capture with the phone locked
+and app backgrounded. Extended native stability remains unverified. Project files live in `~/phone-mic`, including
+the Windows Python environment.
 
 ## Verified so far
 
 - Windows generated tone → VB-CABLE → microphone capture: **PASS**.
-- 17 Python tests (buffering, authentication, protocol, cleanup, tone detection): **PASS**.
+- 18 Python tests (buffering, authentication, protocol, private APK download, cleanup, tone detection): **PASS**.
 - 2 AudioWorklet packetization/downmix tests: **PASS**.
 - 60-second simulated phone using real TLS/WebSocket → VB-CABLE capture:
   3,000 packets, zero buffer underruns, dropped samples, or playback callback errors;
@@ -85,14 +87,15 @@ lasts 14 days. Downloading the public CA uses unencrypted HTTP; the audio and
 connection token use HTTPS/WSS. Use only on your trusted LAN.
 
 `.local/connect.html` and `connection.json` contain a secret connection token.
-Do not share them. A new token is generated each time the server starts; reopen
-the setup page after restarting. Certificates, tokens, logs, generated setup
+Do not share them. By default a new token is generated each time the server starts; reopen
+the setup page after restarting. The explicit development `--reuse-session`
+option preserves the previous token when testing a paired native APK. Certificates, tokens, logs, generated setup
 pages, environments and third-party binaries are all git-ignored.
 
 ## Testing
 
 ```sh
-./run.sh test                     # 17 Python tests; no physical microphone needed
+./run.sh test                     # 18 Python tests; no physical microphone needed
 node --test web/capture.test.cjs  # AudioWorklet packetization tests
 ./run.sh list                     # Windows endpoints
 ./run.sh check                    # actual cable-only test
