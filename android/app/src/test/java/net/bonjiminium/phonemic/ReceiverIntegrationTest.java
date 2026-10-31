@@ -42,6 +42,15 @@ public class ReceiverIntegrationTest {
         assertEquals(200, status(config, config.getProperty("pin")));
     }
 
+    @Test public void realPythonPairingQrParsesAndAuthenticatesWithoutBundledCredentials() throws Exception {
+        Properties original = config();
+        PairingConfig qr = PairingConfig.parse(original.getProperty("pairingJson"));
+        Properties scanned = new Properties();
+        scanned.setProperty("statusUrl", qr.serverUrl + "/status");
+        scanned.setProperty("token", qr.token);
+        assertEquals(200, status(scanned, qr.certificateSha256));
+    }
+
     @Test public void realWindowsReceiverIsRejectedWithWrongPin() throws Exception {
         Properties config = config();
         assertThrows(IOException.class, () -> status(config, "00".repeat(32)));

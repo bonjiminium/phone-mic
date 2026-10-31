@@ -14,7 +14,7 @@ import sounddevice as sd
 from audio_buffer import AudioBuffer, decode_packet, RATE
 from windows_audio import cable_device
 from connection_page import write_page
-from pairing import pairing_token
+from pairing import pairing_token, pairing_payload
 
 ROOT = Path(__file__).resolve().parent
 LOG = logging.getLogger('phone-mic')
@@ -173,8 +173,9 @@ async def serve(args):
             ca_url = f'http://{args.host}:{args.port - 1}/phone-mic-ca.crt'
             ca_der = ssl.PEM_cert_to_DER_cert((ROOT / '.local' / 'phone-mic-ca.crt').read_text())
             fingerprint = ':'.join(f'{byte:02X}' for byte in hashlib.sha256(ca_der).digest())
-            write_page(ROOT / '.local' / 'connect.html', ca_url, url, fingerprint)
-            print(f'\nInstall CA on Android: {ca_url}', flush=True)
+            pairing = pairing_payload(args.host, args.port, token, (ROOT / '.local' / 'server.crt').read_text())
+            write_page(ROOT / '.local' / 'connect.html', ca_url, url, fingerprint, pairing)
+            print('\nOpen .local/connect.html on this PC to install the app and scan its pairing QR. No CA installation needed.', flush=True)
             print(f'Phone page: {url}\nSelect CABLE Output as the microphone in Windows.\n', flush=True)
             await asyncio.Event().wait()
         finally:

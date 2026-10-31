@@ -1,10 +1,19 @@
 """Persistent local pairing secret. Never silently rotate existing credentials."""
+import hashlib
 import json
+import ssl
 import os
 from pathlib import Path
 import re
 import secrets
 import tempfile
+
+
+def pairing_payload(host, port, token, certificate_pem):
+    """App-readable QR schema, containing a leaf pin but never a CA/private key."""
+    certificate = ssl.PEM_cert_to_DER_cert(certificate_pem)
+    return dict(version=1, serverUrl=f'https://{host}:{port}', token=token,
+                certificateSha256=hashlib.sha256(certificate).hexdigest())
 
 
 def _read_token(path, *, legacy=False):

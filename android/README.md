@@ -1,111 +1,114 @@
-# Native Android risk spike
+# Android microphone with QR pairing
 
-Minimal vertical slice: **AudioRecord → pinned TLS WebSocket → existing Windows
-receiver/VB-CABLE**, kept alive with the screen locked using a microphone
-foreground service and partial CPU wake lock.
+AudioRecord → certificate-pinned TLS WebSocket → Windows receiver/VB-CABLE.
+A microphone foreground service and partial CPU wake lock support screen-off
+capture. Start/Stop controls and a notification Stop action; no automatic
+microphone start, boot start, automatic reconnect, recordings or telemetry.
 
-One Start/Stop screen and a persistent notification with Stop. No accounts,
-pairing UI, automatic reconnect, boot start, background start, audio files,
-telemetry, QR scanner, location permissions, or new Windows audio driver.
+## Install once, scan to pair
 
-## Verification / acceptance
+1. Start the Windows receiver; open its private `.local/connect.html` on the PC.
+2. Install/update the reusable APK using the first QR/link (normal phone camera or
+   browser), or transfer `.local/phone-mic-debug.apk` over USB. It is debug-signed.
+   Revoke Chrome's permission to install unknown apps after installation.
+3. Open Phone Mic → **Scan pairing QR**. Camera permission is requested only for
+   scanning. Scan the second QR using this in-app scanner, not Chrome.
+4. Compare receiver address and full certificate SHA-256 with the PC page. Confirm
+   **Pair**. Parsing or scanning alone does not save pairing or start recording.
+5. Tap **Start**, grant microphone permission (notifications recommended), then
+   tap Start again. Stop the browser microphone first. Choose CABLE Output on PC.
 
-Built and APK signature verified. Nine JVM tests passed, including:
-- exact 960-sample / 3,840-byte little-endian browser-compatible packet encoding;
-- correct self-signed leaf certificate works without a system CA;
-- incorrect pin, expired certificate and wrong hostname are rejected;
-- actual Windows receiver accepts pinned HTTPS + its session token;
-- actual Windows receiver is rejected with an incorrect pin.
+The same APK works for different receivers: the URL, token and certificate pin
+are scanned at runtime, not compiled into it. Upgrading from the old embedded-
+credential APK requires scanning once. Same application ID/debug key permits an
+in-place update. Pairing changes are disabled while streaming.
 
-Android lint: zero errors; warnings include intentionally custom leaf-pinning
-trust manager, backup configuration and prototype-only untranslated strings.
-Pinning implementation is small and negative cases are tested; normal OkHttp
-hostname verification remains enabled. These JVM tests do **not** establish
-Android lifecycle, permissions, microphone or screen-off behavior.
+Pairing survives app/receiver/PC restarts. If the receiver address, certificate
+or credential changes, stop, scan its updated QR, and confirm again—**no APK
+rebuild or reinstall**. The development leaf certificate lasts 14 days; renew it
+on the PC and re-pair when it expires. Certificate expiry/pin mismatch fail closed.
+No CA installation, system trust changes, HTTP audio or trust-all fallback.
 
-**Real-device results:** user verified native speech reaches the Windows app
-for live dictation, and continues with the phone locked and app backgrounded.
-Extended stability, counters, stop/restart and network-failure handling remain
-unverified.
+**Forget receiver** removes local pairing only. To revoke a lost phone's token,
+stop the Windows receiver and run `./run.sh serve IP --reset-pairing`; then re-scan
+on retained phones. This revokes all current phones/browser links together.
+Credentials are not per-device yet.
 
-**Manual test checklist (including remaining checks):**
-1. Stop the browser microphone. Install APK and explicitly start from its screen.
-2. Grant microphone permission (notifications recommended); tap Start again.
-3. Confirm Streaming and real speech through CABLE Output in a Windows recording.
-4. Lock the phone for at least two minutes, speak again, and verify speech still
-   reaches Windows. Then check gap/drop/device-error counters on reopening.
-5. Stop using the notification. Verify Android microphone indicator disappears
-   and the receiver disconnects. Start/stop again to check resources release.
-6. Deliberately interrupt Wi-Fi. Verify a clear stopped/error state, rather than
-   queued delayed speech or silent auto-recording. Reconnect manually.
+## Security boundary
 
-Do not add pairing polish/reconnect or run as a workday microphone until this
-remaining stability checks pass on the real phone. Short screen-off/background
-capture is verified; workday reliability is not yet established.
+- Scan only the pairing QR displayed by your own PC. A malicious QR could point
+  to an attacker's correctly pinned receiver. Confirmation shows address/pin,
+  never the secret token. There is no remote pairing-QR endpoint or deep link.
+- PC `.local/connect.html`, `connection.json`, `pairing.json` and QR screenshots
+  contain secrets. Do not share them. The new APK contains **no** pairing secret;
+  old APKs from versions before 0.2 did and must remain private.
+- Phone credentials are stored atomically under app-private `noBackupFilesDir`,
+  not assets, shared storage or cloud/device backups. Uninstall/clear app data
+  forgets pairing. Rooted/compromised devices are outside this boundary.
+- The bundled ZXing scanner works offline; it uses camera only in its scanning
+  activity. Barcode images/beeps are disabled and scanner screenshots/recents
+  are blocked. Cancelling, denying permission or scanning invalid input leaves
+  current pairing unchanged. HTTPS origins, schema version, credential lengths
+  and pins are validated before showing confirmation; no QR contents are logged.
+- Normal hostname verification remains enabled alongside exact leaf pinning.
+  Supported origins are IPv4/DNS + optional port, not IPv6 literals yet.
+- APK download remains authenticated HTTPS via `/android.apk?token=...`, even
+  though the new APK itself is reusable. Alternatively transfer via USB.
 
-## Build
-
-Linux tooling is cached under `~/.cache/phone-mic-android` (override with
-`PHONE_MIC_TOOLS`). JDK 21 from Azul, Gradle 9.3.1, Google Android SDK platform 36 /
-build tools 36.0.0; Android Gradle plugin 9.1.0. No Android Studio needed.
-Tool downloads are checked against vendor-published digests.
+## Build / verification
 
 ```sh
 cd ~/phone-mic
-./android/bootstrap-tools.sh  # fetch/cache tools and install SDK components
-./android/build.sh            # unit tests, lint, APK
-PHONE_MIC_TEST_RECEIVER=1 ./android/build.sh  # also real receiver TLS tests
+./android/bootstrap-tools.sh
+./android/build.sh  # no running receiver or local pairing config required
+PHONE_MIC_TEST_RECEIVER=1 ./android/build.sh  # opt-in real receiver tests
 ```
 
-Receiver must already have `.local/connection.json` and `.local/server.crt`.
-`build.sh` generates private build assets with that session's WebSocket URL,
-persistent pairing token, and exact SHA-256 leaf-certificate pin. Output:
-`.local/phone-mic-debug.apk` (debug-signed). The assets, build outputs, APK, token,
-keys and local certificates are git-ignored. **Do not share this private APK**:
-its pairing credential can be extracted from it. This is not a public release.
+Tool cache: `~/.cache/phone-mic-android` (override `PHONE_MIC_TOOLS`), vendor-digest
+checked downloads: Azul JDK 21, Gradle 9.3.1, Google SDK 36/build tools 36.0.0,
+Android Gradle plugin 9.1.0. Minimum Android 11/API 30; target SDK 36.
+Dependencies: OkHttp 4.12.0, bundled ZXing Android Embedded 4.3.0 and explicit
+AndroidX Core 1.17.0 (required by the scanner but absent from its published POM).
+Camera is the
+only new permission beyond the earlier microphone/foreground/internet/wake-lock/
+optional-notification permissions. No location/Bluetooth/Wi-Fi scanning.
 
-To install over the LAN, the existing receiver exposes `/android.apk?token=...`
-over HTTPS, rejecting unauthenticated downloads. Refresh the browser mic page
-using its full token-bearing URL, and use the Android download link. Android
-may request permission for Chrome to install unknown apps; revoke that installer
-permission afterward. The native app does **not** install any CA or alter the
-phone's trust store. Alternatively transfer the APK over USB.
+Output: `.local/phone-mic-debug.apk`. Build verifies there are no bundled assets
+or known local credentials in any decompressed APK member before publishing it.
+Generated integration-test credentials are local/git-ignored, not APK inputs.
 
-The phone must support Android 11+ (API 30). Target SDK is 36, the stable platform
-available in the installed Google SDK feed. For apps targeting <=36, current
-Android documentation says LAN access is implicit with INTERNET; no scan,
-Bluetooth or location permission is requested. When targeting SDK 37+, add the
-proper ACCESS_LOCAL_NETWORK runtime flow instead of assuming this remains true.
+**Verified:** 18 JVM/Robolectric tests pass: packet format, positive/negative
+pin/hostname/expiry TLS cases, strict QR parser, persistent/replaceable/forgettable
+storage, real PC-generated QR → Java parser → pinned authenticated Windows HTTPS,
+and scanner Activity launch/resource inflation/lifecycle on Android API 36.
+The new framework-level scanner test reproduced a missing ContextCompat crash
+before adding AndroidX Core and passes with it. Camera hardware still needs a
+real phone; this test does not establish successful camera decoding.
+APK signature verified; lint has zero errors (prototype/security-review warnings
+remain). Backend has 27 passing Python tests; AudioWorklet has two passing tests.
 
-## Receiver restarts / security boundary
+Earlier native version has user-verified live dictation and locked-phone/
+background capture. User confirmed the updated QR scanner no longer crashes on
+the real phone. Successful QR decoding/confirmation, re-pairing and Android
+no-backup storage persistence still require real-device verification. JVM tests
+do not prove Android lifecycle.
 
-Normal app, receiver and PC restarts do **not** require rebuilding the APK.
-The receiver saves its pairing token in `.local/pairing.json`; upgrading adopts
-an existing `.local/connection.json` token so the already-installed APK continues
-to work. `--reuse-session` remains accepted for compatibility but is unnecessary.
-Keep `.local/` private and persistent. If saved pairing data is corrupt, startup
-fails rather than silently breaking the installed APK.
+Manual acceptance, in order:
+1. Update APK, deny/cancel scanning once; verify no unintended pairing/recording.
+2. Scan the PC pairing QR; inspect/confirm address/pin, then Start and dictate.
+3. Stop/relaunch app: pairing retained. Start again; lock screen and verify speech.
+4. Stop and Forget: Start disabled. Re-scan and confirm without reinstalling.
+5. Later: PC restart, controlled credential reset/certificate renewal and re-scan,
+   stop via notification, network interruption, 15–30 minute stability/counters.
 
-To explicitly revoke the credential, stop the receiver and use
-`./run.sh serve WINDOWS_LAN_IP --reset-pairing`. Old APKs and browser links then
-stop authenticating; rebuild/reinstall to pair again. Certificate replacement
-or receiver address/port changes also still require rebuilding this prototype's
-APK. The development server certificate lasts 14 days; expiry fails closed and
-requires certificate renewal and an updated APK. There is no trust-all or HTTP
-fallback. Persistent pairing does not add PC autostart or app reconnect.
+No PC autostart, discovery, Windows installer, production APK release/signing,
+automatic certificate renewal or automatic reconnect in this slice. The CPU wake
+lock uses battery and is released on service teardown; OEM restrictions remain
+subject to real-device testing. SDK 37+ LAN runtime permission flow is deferred
+until targeting that platform; target <=36 currently inherits LAN access through
+INTERNET per Android documentation.
 
-This preserves the current server and wire protocol. The app deliberately fails
-rather than reconnecting automatically; return to the visible activity and press
-Start. START_NOT_STICKY prevents OS-triggered automatic recording after a kill.
-The send queue is bounded to roughly 200 ms, and a stalled network stops capture.
-
-Permissions: microphone, internet, microphone foreground service, notifications
-(optional at runtime), wake lock. CPU wake lock is held only during the explicit
-foreground session and released on service teardown; it uses battery, so charge
-for long sessions. No blanket battery-optimization exemption is requested in this
-spike. OEM background restrictions still need real-device testing.
-
-Sources:
+References:
 - https://developer.android.com/develop/background-work/services/fgs/service-types
-- https://developer.android.com/develop/background-work/services/fgs/restrictions-bg-start
 - https://developer.android.com/privacy-and-security/local-network-permission
+- https://github.com/journeyapps/zxing-android-embedded/tree/v4.3.0

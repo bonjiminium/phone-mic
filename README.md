@@ -9,7 +9,8 @@ the Windows Python environment.
 ## Verified so far
 
 - Windows generated tone → VB-CABLE → microphone capture: **PASS**.
-- 25 Python tests (persistent pairing, buffering, authentication, protocol, private APK download, cleanup, tone detection): **PASS**.
+- 27 Python tests (QR setup page, persistent pairing, buffering, authentication, protocol, authenticated APK download, cleanup, tone detection): **PASS**.
+- 18 JVM/Robolectric tests (QR validation/storage, pinning, packet format, real receiver integration, Android scanner Activity launch): **PASS**. Actual camera decoding/pairing still needs phone testing.
 - 2 AudioWorklet packetization/downmix tests: **PASS**.
 - 60-second simulated phone using real TLS/WebSocket → VB-CABLE capture:
   3,000 packets, zero buffer underruns, dropped samples, or playback callback errors;
@@ -21,7 +22,8 @@ the Windows Python environment.
   Windows recording app: **PASS**, without installing the development CA.
 
 **Still needs verification:** measured end-to-end latency, longer-session Wi-Fi
-stability, and screen-off/background operation (not supported by this prototype).
+stability, and the new QR-pairing UI. Screen-off/background capture is verified
+for the earlier native version, not supported by the browser version.
 The simulated test runs on the PC and is not a substitute for phone testing.
 
 ## Setup / run
@@ -49,63 +51,60 @@ TCP 8764/8765 on the selected local IP from `LocalSubnet`. The rule supports
 Public Wi-Fi profiles but does **not** permit arbitrary internet sources.
 No need to change the network profile or disable the firewall.
 
-### Connect Android
+### Connect Android (native app)
 
-**Permission gotcha found during phone testing:** Chrome's
-`ERR_TOO_MANY_RETRIES` occurred before any request reached Windows. Granting
-Chrome **Nearby devices / Local network** permission in Android app settings
-resolved it. Check this before changing firewall rules. Menu labels depend on
-Android version.
+Open the private `.local/connect.html` on the Windows desktop:
 
-The user successfully streamed without installing the development CA. Do not
-install it by default: it adds trust beyond this single server. Browser behavior
-with self-signed TLS varies; microphone capture still requires a secure context.
-A future native app should pin just the server certificate instead.
+1. Install/update the reusable Android APK using its first QR/download link, or
+   transfer `.local/phone-mic-debug.apk` over USB. No credentials are built in.
+2. Open Phone Mic → **Scan pairing QR**; grant camera access and scan the second
+   QR on the PC. Compare receiver address/certificate fingerprint, then **Pair**.
+3. Tap **Start** (grant microphone permission if requested), then select
+   **CABLE Output (VB-Audio Virtual Cable)** in the intended Windows app.
 
-Open `.local/connect.html` on the Windows desktop. This private local page has
-two QR codes. Skip the first (CA installation) unless you explicitly choose the
-broader development trust described below; use the second for the mic page.
+No CA installation. Pairing is saved privately on the phone and survives restarts.
+If the PC address, credential or certificate changes, scan its new QR—no APK
+rebuild. The development leaf certificate lasts 14 days; renew then re-pair.
+The app never starts recording merely from scanning. See [Android docs](android/README.md)
+for security boundaries, build instructions and remaining real-device checks.
 
-Optional CA-based setup, **not used in the verified phone test**:
+### Legacy browser prototype
 
-1. Download the development CA from the first QR code. In Android Settings,
-   search for **Install a certificate** → **CA certificate**, then select the
-   downloaded `phone-mic-ca.crt`. Menu names vary by phone. Check its SHA-256
-   fingerprint against the setup page when Android exposes it.
-2. Scan the second QR code to open the full HTTPS phone URL, including its
-   `#connection-token`. Use Chrome; tap **Start mic** and allow microphone access.
-3. Keep the page visible. A screen wake lock is requested when supported, but
-   Android may still suspend capture if you leave the page or lock the phone.
-4. In the intended Windows app select **CABLE Output (VB-Audio Virtual Cable)**.
-   Record a short spoken phrase to verify real speech end to end.
+The setup page's collapsed browser section links to the token-bearing microphone
+page. Keep it visible during capture; browser screen-off capture is unsupported.
+Stop browser capture before starting the native app.
 
-**Trust warning:** installing a CA is a security-sensitive action: it allows
-certificates signed by that CA to be trusted by Chrome. This CA's private key
-stays in `.local/ca.key` and must never be shared. Remove the CA from Android's
-user credentials when finished. The CA lasts 30 days; the server certificate
-lasts 14 days. Downloading the public CA uses unencrypted HTTP; the audio and
-connection token use HTTPS/WSS. Use only on your trusted LAN.
+**Permission gotcha:** Chrome's `ERR_TOO_MANY_RETRIES` occurred before any request
+reached Windows. Granting Chrome **Nearby devices / Local network** permission
+resolved it. Check this before changing firewall rules; labels vary by Android.
+
+User-verified browser capture worked without installing the development CA.
+Do not install it by default: it broadens phone trust. Browser handling of
+self-signed TLS varies; capture requires a secure context. Optional public CA
+information remains in the collapsed section for legacy testing only. Never
+share `.local/ca.key`. Native audio uses only its scanned certificate pin.
 
 Pairing persists in `.local/pairing.json` across receiver and PC restarts.
 On upgrade, the receiver adopts the existing `connection.json` token so the
 installed APK keeps working without rebuilding. `--reuse-session` is now an
 optional compatibility flag; reuse is the default. Do not delete `.local/`.
 
-To deliberately revoke old APKs/browser links, stop the receiver and run
+To deliberately revoke paired phones/browser links, stop the receiver and run
 `./run.sh serve WINDOWS_LAN_IP --reset-pairing`. This is the only normal startup
-option that rotates the token; rebuilding/reinstalling the private APK is then
-required. Corrupt saved credentials fail closed instead of silently rotating.
+option that rotates the token; re-scan the new pairing QR on retained phones.
+Old pre-QR APK versions would need updating. Corrupt saved credentials fail closed instead of silently rotating.
 The receiver must still be started after a PC reboot, and the app started manually;
 this change does not add autostart or reconnect.
 
 `pairing.json`, `connection.json`, and `connect.html` contain secrets. Do not
-share them or the private APK. Certificates, tokens, logs, generated setup pages,
+share them. Old pre-QR APKs also contain secrets; the new APK does not.
+Certificates, tokens, logs, generated setup pages,
 environments and third-party binaries are all git-ignored.
 
 ## Testing
 
 ```sh
-./run.sh test                     # 25 Python tests; no physical microphone needed
+./run.sh test                     # 27 Python tests; no physical microphone needed
 node --test web/capture.test.cjs  # AudioWorklet packetization tests
 ./run.sh list                     # Windows endpoints
 ./run.sh check                    # actual cable-only test

@@ -17,7 +17,6 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.PowerManager;
-import java.nio.charset.StandardCharsets;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import javax.net.ssl.SSLContext;
@@ -78,15 +77,12 @@ public final class MicService extends Service {
     }
 
     private void connect() throws Exception {
-        JSONObject config;
-        try (java.io.InputStream in = getAssets().open("connection.json")) {
-            java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
-            byte[] buffer = new byte[4096];
-            int n;
-            while ((n = in.read(buffer)) != -1) bytes.write(buffer, 0, n);
-            config = new JSONObject(new String(bytes.toByteArray(), StandardCharsets.UTF_8));
+        PairingConfig config = new PairingStore(getNoBackupFilesDir().toPath()).load();
+        if (config == null) {
+            finish("Not paired. Scan the PC setup QR before starting.");
+            return;
         }
-        PinnedTrust trust = new PinnedTrust(config.getString("certificateSha256"));
+        PinnedTrust trust = new PinnedTrust(config.certificateSha256);
         SSLContext tls = SSLContext.getInstance("TLS");
         tls.init(null, new TrustManager[] {trust}, null);
         client = new OkHttpClient.Builder()
@@ -97,7 +93,7 @@ public final class MicService extends Service {
                 .pingInterval(10, TimeUnit.SECONDS)
                 .retryOnConnectionFailure(false)
                 .build();
-        Request request = new Request.Builder().url(config.getString("websocketUrl")).build();
+        Request request = new Request.Builder().url(config.websocketUrl()).build();
         socket = client.newWebSocket(request, new WebSocketListener() {
             @Override public void onOpen(WebSocket ws, Response response) {
                 if (ending.get()) { ws.close(1000, "Stopped"); return; }
@@ -127,9 +123,9 @@ public final class MicService extends Service {
                 if (response != null && response.code() == 409) {
                     finish("Receiver busy. Stop the browser microphone, then tap Start again.");
                 } else if (response != null && response.code() == 401) {
-                    finish("Pairing was reset or does not match this receiver. Install an APK paired to this receiver.");
+                    finish("Pairing no longer matches. Stop and scan the receiver's current pairing QR.");
                 } else {
-                    finish("Connection failed: " + error.getClass().getSimpleName() + ". Check certificate pin, Wi-Fi and receiver.");
+                    finish("Connection failed: " + error.getClass().getSimpleName() + ". Check Wi-Fi and receiver. If its address/certificate changed, scan its new pairing QR.");
                 }
             }
 
