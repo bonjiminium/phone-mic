@@ -127,7 +127,7 @@ public final class MicService extends Service {
                 if (response != null && response.code() == 409) {
                     finish("Receiver busy. Stop the browser microphone, then tap Start again.");
                 } else if (response != null && response.code() == 401) {
-                    finish("Pairing token expired. Rebuild/reinstall this private spike APK.");
+                    finish("Pairing was reset or does not match this receiver. Install an APK paired to this receiver.");
                 } else {
                     finish("Connection failed: " + error.getClass().getSimpleName() + ". Check certificate pin, Wi-Fi and receiver.");
                 }

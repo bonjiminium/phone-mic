@@ -9,7 +9,7 @@ the Windows Python environment.
 ## Verified so far
 
 - Windows generated tone → VB-CABLE → microphone capture: **PASS**.
-- 18 Python tests (buffering, authentication, protocol, private APK download, cleanup, tone detection): **PASS**.
+- 25 Python tests (persistent pairing, buffering, authentication, protocol, private APK download, cleanup, tone detection): **PASS**.
 - 2 AudioWorklet packetization/downmix tests: **PASS**.
 - 60-second simulated phone using real TLS/WebSocket → VB-CABLE capture:
   3,000 packets, zero buffer underruns, dropped samples, or playback callback errors;
@@ -86,16 +86,26 @@ user credentials when finished. The CA lasts 30 days; the server certificate
 lasts 14 days. Downloading the public CA uses unencrypted HTTP; the audio and
 connection token use HTTPS/WSS. Use only on your trusted LAN.
 
-`.local/connect.html` and `connection.json` contain a secret connection token.
-Do not share them. By default a new token is generated each time the server starts; reopen
-the setup page after restarting. The explicit development `--reuse-session`
-option preserves the previous token when testing a paired native APK. Certificates, tokens, logs, generated setup
-pages, environments and third-party binaries are all git-ignored.
+Pairing persists in `.local/pairing.json` across receiver and PC restarts.
+On upgrade, the receiver adopts the existing `connection.json` token so the
+installed APK keeps working without rebuilding. `--reuse-session` is now an
+optional compatibility flag; reuse is the default. Do not delete `.local/`.
+
+To deliberately revoke old APKs/browser links, stop the receiver and run
+`./run.sh serve WINDOWS_LAN_IP --reset-pairing`. This is the only normal startup
+option that rotates the token; rebuilding/reinstalling the private APK is then
+required. Corrupt saved credentials fail closed instead of silently rotating.
+The receiver must still be started after a PC reboot, and the app started manually;
+this change does not add autostart or reconnect.
+
+`pairing.json`, `connection.json`, and `connect.html` contain secrets. Do not
+share them or the private APK. Certificates, tokens, logs, generated setup pages,
+environments and third-party binaries are all git-ignored.
 
 ## Testing
 
 ```sh
-./run.sh test                     # 18 Python tests; no physical microphone needed
+./run.sh test                     # 25 Python tests; no physical microphone needed
 node --test web/capture.test.cjs  # AudioWorklet packetization tests
 ./run.sh list                     # Windows endpoints
 ./run.sh check                    # actual cable-only test

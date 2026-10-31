@@ -59,7 +59,7 @@ PHONE_MIC_TEST_RECEIVER=1 ./android/build.sh  # also real receiver TLS tests
 
 Receiver must already have `.local/connection.json` and `.local/server.crt`.
 `build.sh` generates private build assets with that session's WebSocket URL,
-bearer token, and exact SHA-256 leaf-certificate pin. Output:
+persistent pairing token, and exact SHA-256 leaf-certificate pin. Output:
 `.local/phone-mic-debug.apk` (debug-signed). The assets, build outputs, APK, token,
 keys and local certificates are git-ignored. **Do not share this private APK**:
 its pairing credential can be extracted from it. This is not a public release.
@@ -79,12 +79,20 @@ proper ACCESS_LOCAL_NETWORK runtime flow instead of assuming this remains true.
 
 ## Receiver restarts / security boundary
 
-Normal receiver restart rotates its session token, invalidating this paired APK.
-Rebuild/reinstall after rotation. For explicit development-only restarts that
-must keep this spike paired, run Windows `receiver.py --host WINDOWS_LAN_IP
---reuse-session`; that opt-in reuses `.local/connection.json`'s previous token.
-Host/port must match. Certificate replacement also requires rebuilding the APK;
-expired certificates fail closed. There is no trust-all or HTTP fallback.
+Normal app, receiver and PC restarts do **not** require rebuilding the APK.
+The receiver saves its pairing token in `.local/pairing.json`; upgrading adopts
+an existing `.local/connection.json` token so the already-installed APK continues
+to work. `--reuse-session` remains accepted for compatibility but is unnecessary.
+Keep `.local/` private and persistent. If saved pairing data is corrupt, startup
+fails rather than silently breaking the installed APK.
+
+To explicitly revoke the credential, stop the receiver and use
+`./run.sh serve WINDOWS_LAN_IP --reset-pairing`. Old APKs and browser links then
+stop authenticating; rebuild/reinstall to pair again. Certificate replacement
+or receiver address/port changes also still require rebuilding this prototype's
+APK. The development server certificate lasts 14 days; expiry fails closed and
+requires certificate renewal and an updated APK. There is no trust-all or HTTP
+fallback. Persistent pairing does not add PC autostart or app reconnect.
 
 This preserves the current server and wire protocol. The app deliberately fails
 rather than reconnecting automatically; return to the visible activity and press

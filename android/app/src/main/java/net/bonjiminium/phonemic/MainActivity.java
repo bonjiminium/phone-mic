@@ -56,7 +56,7 @@ public final class MainActivity extends Activity {
         stop.setOnClickListener(view -> stopService(new Intent(this, MicService.class)));
         layout.addView(stop);
         TextView note = new TextView(this);
-        note.setText("Close the browser microphone first.\n\nAfter Streaming appears, lock the screen and verify speech on Windows.\n\nUses only the pinned Windows certificate. No CA installation or phone recordings.\n\nThis private test APK is paired to one running receiver. If the receiver restarts, rebuild the APK.");
+        note.setText("Close the browser microphone first.\n\nAfter Streaming appears, lock the screen and verify speech on Windows.\n\nUses only the pinned Windows certificate. No CA installation or phone recordings.\n\nPairing survives app and Windows receiver restarts. This private APK stays paired unless pairing is reset, the receiver address changes, or its certificate is replaced.");
         layout.addView(note);
         setContentView(layout);
     }

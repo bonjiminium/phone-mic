@@ -5,7 +5,6 @@ import hmac
 import hashlib
 import json
 import logging
-import secrets
 import ssl
 from pathlib import Path
 
@@ -15,6 +14,7 @@ import sounddevice as sd
 from audio_buffer import AudioBuffer, decode_packet, RATE
 from windows_audio import cable_device
 from connection_page import write_page
+from pairing import pairing_token
 
 ROOT = Path(__file__).resolve().parent
 LOG = logging.getLogger('phone-mic')
@@ -147,12 +147,7 @@ def application(receiver):
 
 
 async def serve(args):
-    token = secrets.token_urlsafe(24)
-    if args.reuse_session:
-        previous = json.loads((ROOT / '.local' / 'connection.json').read_text())
-        if previous['host'] != args.host or previous['port'] != args.port:
-            raise ValueError('Cannot reuse a session on a different host/port')
-        token = previous['token']
+    token = pairing_token(ROOT / '.local', reset=args.reset_pairing)
     tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     tls.minimum_version = ssl.TLSVersion.TLSv1_2
     tls.load_cert_chain(ROOT / '.local' / 'server.crt', ROOT / '.local' / 'server.key')
@@ -192,7 +187,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--host', required=True, help='Windows LAN IPv4; binds only this interface')
     parser.add_argument('--port', type=int, default=8765)
-    parser.add_argument('--reuse-session', action='store_true', help='Explicitly reuse the previous local token (for testing a paired private APK)')
+    pairing_options = parser.add_mutually_exclusive_group()
+    pairing_options.add_argument('--reset-pairing', action='store_true', help='Generate a new secret, invalidating installed APKs and old browser links')
+    pairing_options.add_argument('--reuse-session', action='store_true', help='Compatibility flag: pairing is now persistent by default')
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
     try:

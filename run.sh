@@ -7,7 +7,13 @@ case "${1:-check}" in
   serve)
     ip=${2:?Usage: ./run.sh serve WINDOWS_LAN_IP}
     [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Expected IPv4 address' >&2; exit 2; }
-    action="receiver.py --host $ip"
+    option=${3:-}
+    case "$option" in
+      ''|--reset-pairing|--reuse-session) ;;
+      *) echo 'Expected --reset-pairing or no option' >&2; exit 2 ;;
+    esac
+    [[ $# -le 3 ]] || { echo 'Too many serve arguments' >&2; exit 2; }
+    action="receiver.py --host $ip $option"
     ;;
   network-test) action='test_network_audio.py' ;;
   list) action='windows_audio.py --list' ;;
