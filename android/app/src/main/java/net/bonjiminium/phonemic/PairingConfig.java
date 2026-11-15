@@ -12,11 +12,14 @@ public final class PairingConfig {
     public final String serverUrl;
     public final String token;
     public final String certificateSha256;
+    /** Informational expiry, milliseconds since epoch; zero for older QRs. */
+    public final long certificateExpiresAt;
 
-    private PairingConfig(String origin, String token, String pin) {
+    private PairingConfig(String origin, String token, String pin, long expiresAt) {
         this.serverUrl = origin;
         this.token = token;
         this.certificateSha256 = pin;
+        this.certificateExpiresAt = expiresAt;
     }
 
     public static PairingConfig parse(String text) {
@@ -47,11 +50,24 @@ public final class PairingConfig {
             if (!token.matches("[A-Za-z0-9_-]{32,128}")) throw new IllegalArgumentException("Invalid pairing token");
             if (!pin.matches("[A-Fa-f0-9]{64}")) throw new IllegalArgumentException("Invalid certificate fingerprint");
             String canonical = "https://" + host.toLowerCase(Locale.ROOT) + (uri.getPort() == -1 ? "" : ":" + uri.getPort());
-            return new PairingConfig(canonical, token, pin.toLowerCase(Locale.ROOT));
+            long expiresAt = 0;
+            if (data.has("certificateExpiresAt")) {
+                Object expiry = data.get("certificateExpiresAt");
+                if (!(expiry instanceof Number) || ((Number) expiry).doubleValue() != ((Number) expiry).longValue()
+                        || ((Number) expiry).longValue() <= 0) {
+                    throw new IllegalArgumentException("Invalid certificate expiry");
+                }
+                expiresAt = ((Number) expiry).longValue();
+            }
+            return new PairingConfig(canonical, token, pin.toLowerCase(Locale.ROOT), expiresAt);
         } catch (JSONException | URISyntaxException e) {
             // Never include QR contents (or parser messages containing the token).
             throw new IllegalArgumentException("Invalid Phone Mic pairing QR");
         }
+    }
+
+    public PairingConfig withVerifiedExpiry(long expiresAt) {
+        return new PairingConfig(serverUrl, token, certificateSha256, expiresAt);
     }
 
     public String websocketUrl() {
@@ -60,8 +76,10 @@ public final class PairingConfig {
 
     public String serialize() {
         try {
-            return new JSONObject().put("version", 1).put("serverUrl", serverUrl)
-                    .put("token", token).put("certificateSha256", certificateSha256).toString();
+            JSONObject data = new JSONObject().put("version", 1).put("serverUrl", serverUrl)
+                    .put("token", token).put("certificateSha256", certificateSha256);
+            if (certificateExpiresAt > 0) data.put("certificateExpiresAt", certificateExpiresAt);
+            return data.toString();
         } catch (JSONException e) { throw new IllegalStateException("Could not encode pairing"); }
     }
 }

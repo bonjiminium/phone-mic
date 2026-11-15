@@ -9,11 +9,14 @@ import secrets
 import tempfile
 
 
-def pairing_payload(host, port, token, certificate_pem):
+def pairing_payload(host, port, token, certificate_pem, expires_at=None):
     """App-readable QR schema, containing a leaf pin but never a CA/private key."""
     certificate = ssl.PEM_cert_to_DER_cert(certificate_pem)
-    return dict(version=1, serverUrl=f'https://{host}:{port}', token=token,
-                certificateSha256=hashlib.sha256(certificate).hexdigest())
+    payload = dict(version=1, serverUrl=f'https://{host}:{port}', token=token,
+                   certificateSha256=hashlib.sha256(certificate).hexdigest())
+    if expires_at is not None:
+        payload['certificateExpiresAt'] = expires_at
+    return payload
 
 
 def _read_token(path, *, legacy=False):

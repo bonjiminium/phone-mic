@@ -6,15 +6,22 @@ import hashlib
 import json
 import logging
 import ssl
+import sys
+import time
+import webbrowser
 from pathlib import Path
 
-from aiohttp import web, WSMsgType
-import sounddevice as sd
-
-from audio_buffer import AudioBuffer, decode_packet, RATE
-from windows_audio import cable_device
-from connection_page import write_page
-from pairing import pairing_token, pairing_payload
+try:
+    from aiohttp import web, WSMsgType
+    import sounddevice as sd
+    import numpy as np
+    from audio_buffer import AudioBuffer, decode_packet, RATE
+    from windows_audio import cable_device
+    from connection_page import write_page
+    from pairing import pairing_token, pairing_payload
+except ImportError:
+    sys.exit('Windows dependencies are missing. Run ./setup.sh, then retry ./run.sh serve.')
+from startup import preflight, certificate_info, troubleshooting
 
 ROOT = Path(__file__).resolve().parent
 LOG = logging.getLogger('phone-mic')
@@ -26,6 +33,10 @@ class Receiver:
         self.buffer = AudioBuffer()
         self.active = None
         self.stream = None
+        self.last_audio = 0
+        self.level = 0
+        self.playback_level = 0
+        self.certificate_expires_at = 0
 
     def authorized(self, request):
         # Query tokens are used only for encrypted WS/APK downloads; never logged.
@@ -35,7 +46,13 @@ class Receiver:
     async def status(self, request):
         if not self.authorized(request):
             raise web.HTTPUnauthorized()
-        return web.json_response(dict(connected=self.active is not None, **self.buffer.stats()))
+        fresh = time.monotonic() - self.last_audio < 2
+        return web.json_response(dict(connected=self.active is not None,
+                                     receiving=self.active is not None and fresh,
+                                     level=self.level if fresh else 0,
+                                     playback_level=self.playback_level if fresh else 0,
+                                     certificateExpiresAt=self.certificate_expires_at,
+                                     **self.buffer.stats()), headers={'Cache-Control': 'no-store'})
 
     async def apk(self, request):
         if not self.authorized(request):
@@ -80,7 +97,10 @@ class Receiver:
                     break
                 if msg.type != WSMsgType.BINARY:
                     raise ValueError('Expected binary audio packets')
-                self.buffer.push(decode_packet(msg.data))
+                samples = decode_packet(msg.data)
+                self.level = min(1.0, float(np.sqrt(np.mean(samples ** 2))) * 4)
+                self.last_audio = time.monotonic()
+                self.buffer.push(samples)
                 # Send lightweight metrics once a second; no audio is saved.
                 if self.buffer.stats()['packets'] % 50 == 0:
                     await ws.send_json(dict(type='stats', **self.buffer.stats()))
@@ -90,6 +110,8 @@ class Receiver:
                 await ws.close(code=1008, message=b'Invalid audio or stream timed out')
         finally:
             self.buffer.reset()
+            self.level = self.playback_level = 0
+            self.last_audio = 0
             self.active = None
             LOG.info('Phone disconnected; buffer cleared')
         return ws
@@ -100,6 +122,7 @@ class Receiver:
 
         def playback(outdata, frames, timing, status):
             mono = self.buffer.read(frames, status=bool(status))
+            self.playback_level = min(1.0, float(np.sqrt(np.mean(mono ** 2))) * 4)
             outdata[:, 0] = mono
             outdata[:, 1] = mono
 
@@ -118,9 +141,9 @@ async def log_request(request, handler):
     try:
         response = await handler(request)
     except web.HTTPException as exc:
-        LOG.info('%s %s from %s -> %s', request.method, request.path, request.remote, exc.status)
+        LOG.debug('%s %s from %s -> %s', request.method, request.path, request.remote, exc.status)
         raise
-    LOG.info('%s %s from %s -> %s', request.method, request.path, request.remote, response.status)
+    LOG.debug('%s %s from %s -> %s', request.method, request.path, request.remote, response.status)
     return response
 
 
@@ -146,12 +169,41 @@ def application(receiver):
     return app
 
 
+def dashboard_application(receiver):
+    # Separate loopback-only dashboard: no CORS, no pairing endpoint, bearer auth.
+    app = web.Application(middlewares=[log_request])
+
+    async def page(request):
+        name = 'dashboard.html' if request.path == '/' else 'dashboard.js'
+        return web.FileResponse(ROOT / 'web' / name, headers={
+            'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer',
+            'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; object-src 'none'",
+        })
+    app.router.add_get('/', page)
+    app.router.add_get('/dashboard.js', page)
+    app.router.add_get('/status', receiver.status)
+    return app
+
+
+def loop_error(loop, context):
+    # Windows Python 3.10 Proactor may report this when a browser closes a socket.
+    # It is a normal peer disconnect, not a receiver failure. Preserve other errors.
+    error = context.get('exception')
+    if isinstance(error, ConnectionResetError) and getattr(error, 'winerror', None) == 10054:
+        LOG.debug('Peer closed its connection')
+        return
+    loop.default_exception_handler(context)
+
+
 async def serve(args):
+    asyncio.get_running_loop().set_exception_handler(loop_error)
+    expiry = preflight(ROOT, args.host, args.port, cable_device)
     token = pairing_token(ROOT / '.local', reset=args.reset_pairing)
     tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     tls.minimum_version = ssl.TLSVersion.TLSv1_2
     tls.load_cert_chain(ROOT / '.local' / 'server.crt', ROOT / '.local' / 'server.key')
     receiver = Receiver(token)
+    receiver.certificate_expires_at = expiry
     runner = web.AppRunner(application(receiver), access_log=None)
     await runner.setup()
     try:
@@ -173,11 +225,30 @@ async def serve(args):
             ca_url = f'http://{args.host}:{args.port - 1}/phone-mic-ca.crt'
             ca_der = ssl.PEM_cert_to_DER_cert((ROOT / '.local' / 'phone-mic-ca.crt').read_text())
             fingerprint = ':'.join(f'{byte:02X}' for byte in hashlib.sha256(ca_der).digest())
-            pairing = pairing_payload(args.host, args.port, token, (ROOT / '.local' / 'server.crt').read_text())
-            write_page(ROOT / '.local' / 'connect.html', ca_url, url, fingerprint, pairing)
-            print('\nOpen .local/connect.html on this PC to install the app and scan its pairing QR. No CA installation needed.', flush=True)
-            print(f'Phone page: {url}\nSelect CABLE Output as the microphone in Windows.\n', flush=True)
-            await asyncio.Event().wait()
+            pairing = pairing_payload(args.host, args.port, token, (ROOT / '.local' / 'server.crt').read_text(), expiry)
+            dashboard = web.AppRunner(dashboard_application(receiver), access_log=None)
+            await dashboard.setup()
+            try:
+                await web.TCPSite(dashboard, '127.0.0.1', args.port + 1).start()
+                target = ROOT / '.local' / 'connect.html'
+                apk_available = (ROOT / '.local' / 'phone-mic-debug.apk').is_file()
+                write_page(target, ca_url, url, fingerprint, pairing,
+                           apk_available=apk_available, dashboard_port=args.port + 1)
+                print('\nReady - waiting for your phone.', flush=True)
+                print(f'Open {target} on this PC for installation, pairing QR and live status.', flush=True)
+                if not apk_available:
+                    print('App installer unavailable: build it with ./android/build.sh. Already-installed phones can connect.', flush=True)
+                print('On phone: Pair & start microphone. In Windows: select CABLE Output (VB-Audio Virtual Cable).', flush=True)
+                print('Leave this terminal open. Press Ctrl+C to stop. For connection help: ./run.sh doctor\n', flush=True)
+                if args.open_page:
+                    try:
+                        if not webbrowser.open(target.as_uri()):
+                            print('Could not open a browser automatically; open the setup file above manually.', flush=True)
+                    except OSError:
+                        print('Open the setup file above manually in your Windows browser.', flush=True)
+                await asyncio.Event().wait()
+            finally:
+                await dashboard.cleanup()
         finally:
             await ca_runner.cleanup()
     finally:
@@ -186,7 +257,9 @@ async def serve(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--host', required=True, help='Windows LAN IPv4; binds only this interface')
+    parser.add_argument('--host', help='Windows LAN IPv4; binds only this interface')
+    parser.add_argument('--open-page', action='store_true', help='Open the private setup page when ready')
+    parser.add_argument('--doctor', action='store_true', help='Show setup and connection checks')
     parser.add_argument('--port', type=int, default=8765)
     pairing_options = parser.add_mutually_exclusive_group()
     pairing_options.add_argument('--reset-pairing', action='store_true', help='Generate a new secret, invalidating installed APKs and old browser links')
@@ -194,6 +267,23 @@ if __name__ == '__main__':
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
     try:
-        asyncio.run(serve(args))
+        if args.doctor:
+            print(troubleshooting())
+            for name, direction in (('CABLE Input', 'output'), ('CABLE Output', 'input')):
+                cable_device(name, direction)
+                print(f'OK: {name}')
+            try:
+                _, expiry = certificate_info(ROOT / '.local' / 'server.crt')
+                print('Certificate: ' + ('expired — run ./run.sh serve to renew and re-pair' if expiry <= time.time() * 1000
+                                        else f'valid until {time.strftime("%Y-%m-%d", time.localtime(expiry / 1000))}'))
+            except (OSError, ssl.SSLError):
+                print('Certificate missing or unreadable — run ./run.sh serve.')
+        else:
+            if not args.host:
+                parser.error('Use ./run.sh serve to detect your Windows LAN address.')
+            asyncio.run(serve(args))
     except KeyboardInterrupt:
-        pass
+        print('\nReceiver stopped. Phone audio is no longer being forwarded.')
+    except (OSError, ValueError, RuntimeError, sd.PortAudioError) as error:
+        print(f'Could not start receiver: {error}\nFor guided checks, run ./run.sh doctor.', file=sys.stderr)
+        sys.exit(1)

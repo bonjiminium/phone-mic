@@ -18,6 +18,26 @@ class ConnectionPageTest(unittest.TestCase):
         self.assertEqual(payload, dict(version=1, serverUrl='https://192.168.1.237:8765',
                                        token='a' * 32, certificateSha256=hashlib.sha256(der).hexdigest()))
 
+    def test_optional_expiry_metadata(self):
+        payload = pairing_payload('192.168.1.2', 8765, 'a' * 32,
+                                  ssl.DER_cert_to_PEM_cert(b'fixture'), 1900000000000)
+        self.assertEqual(payload['certificateExpiresAt'], 1900000000000)
+
+    def test_missing_installer_has_no_broken_download_qr(self):
+        payload = dict(version=1, serverUrl='https://192.168.1.2:8765',
+                       token='a' * 32, certificateSha256='ab' * 32)
+        with tempfile.TemporaryDirectory() as folder, patch('connection_page.qr_svg', return_value='<svg/>') as qr:
+            target = Path(folder) / 'connect.html'
+            write_page(target, 'http://example/ca.crt', payload['serverUrl'] + '/#' + payload['token'],
+                       'CA', payload, apk_available=False)
+            self.assertEqual(qr.call_count, 1)
+            html = target.read_text(encoding='utf-8')
+            self.assertIn('installer hasn’t been built', html)
+            self.assertNotIn('Download Android APK', html)
+            self.assertIn('127.0.0.1:8766', html)
+            self.assertIn('Pair &amp; start microphone', html)
+            self.assertIn('that app’s microphone meter', html)
+
     def test_private_setup_page_has_separate_install_and_in_app_pairing_qrs(self):
         payload = dict(version=1, serverUrl='https://192.168.1.237:8765',
                        token='a' * 32, certificateSha256='ab' * 32)

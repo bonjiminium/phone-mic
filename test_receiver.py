@@ -2,12 +2,14 @@ import asyncio
 import unittest
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 from aiohttp import WSServerHandshakeError, WSMsgType
 from aiohttp.test_utils import TestClient, TestServer
 
-from receiver import Receiver, application
+from receiver import Receiver, application, dashboard_application, loop_error
+import time
+import numpy as np
 
 HELLO = dict(type='start', sampleRate=48000, channels=1, format='f32le')
 
@@ -23,11 +25,55 @@ class ReceiverTest(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         await self.client.close()
 
+    async def test_only_expected_windows_peer_reset_is_quiet(self):
+        loop = MagicMock()
+        error = ConnectionResetError('peer reset')
+        error.winerror = 10054
+        loop_error(loop, {'exception': error})
+        loop.default_exception_handler.assert_not_called()
+        context = {'exception': RuntimeError('unexpected')}
+        loop_error(loop, context)
+        loop.default_exception_handler.assert_called_once_with(context)
+
     async def test_status_requires_token(self):
         response = await self.client.get('/status')
         self.assertEqual(response.status, 401)
         response = await self.client.get('/status', headers={'Authorization': 'Bearer test-secret'})
         self.assertEqual(response.status, 200)
+
+    async def test_loopback_dashboard_is_static_and_status_is_private(self):
+        async with TestClient(TestServer(dashboard_application(self.receiver))) as client:
+            for path in ('/', '/dashboard.js'):
+                response = await client.get(path)
+                self.assertEqual(response.status, 200)
+                self.assertNotIn('test-secret', await response.text())
+            self.assertEqual((await client.get('/status')).status, 401)
+            response = await client.get('/status', headers={'Authorization': 'Bearer test-secret'})
+            self.assertEqual(response.headers['Cache-Control'], 'no-store')
+            self.assertFalse((await response.json())['receiving'])
+            self.assertNotIn('Access-Control-Allow-Origin', response.headers)
+            self.assertEqual((await client.get('/.local/pairing.json')).status, 404)
+
+    async def test_live_level_and_stale_reset(self):
+        ws = await self.client.ws_connect('/audio?token=test-secret')
+        await ws.send_json(HELLO)
+        await ws.receive_json()
+        await ws.send_bytes(np.full(960, .1, dtype='<f4').tobytes())
+        for _ in range(50):
+            if self.receiver.last_audio:
+                break
+            await asyncio.sleep(.01)
+        response = await self.client.get('/status', headers={'Authorization': 'Bearer test-secret'})
+        data = await response.json()
+        self.assertTrue(data['receiving'])
+        self.assertAlmostEqual(data['level'], .4, places=4)
+        self.receiver.last_audio = time.monotonic() - 3
+        response = await self.client.get('/status', headers={'Authorization': 'Bearer test-secret'})
+        data = await response.json()
+        self.assertFalse(data['receiving'])
+        self.assertEqual(data['level'], 0)
+        await ws.close()
+        self.assertEqual(self.receiver.level, 0)
 
     async def test_apk_download_requires_token_and_serves_only_private_artifact(self):
         response = await self.client.get('/android.apk')

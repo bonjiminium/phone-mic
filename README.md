@@ -1,183 +1,193 @@
-# Phone mic
+# Phone Mic
 
-Android microphone → local Wi-Fi → Windows → **CABLE Output** microphone.
-The browser prototype is verified. A minimal [native Android spike](android/README.md)
-now has user-verified live dictation and continued capture with the phone locked
-and app backgrounded. Extended native stability remains unverified. Project files live in `~/phone-mic`, including
-the Windows Python environment.
+Use your Android phone as a Windows microphone over local Wi-Fi:
+**Phone Mic → Windows receiver → VB-CABLE → your calling/dictation app.**
 
-## Verified so far
+## Everyday use
 
-- Windows generated tone → VB-CABLE → microphone capture: **PASS**.
-- 27 Python tests (QR setup page, persistent pairing, buffering, authentication, protocol, authenticated APK download, cleanup, tone detection): **PASS**.
-- 18 JVM/Robolectric tests (QR validation/storage, pinning, packet format, real receiver integration, Android scanner Activity launch): **PASS**. Actual camera decoding/pairing still needs phone testing.
-- 2 AudioWorklet packetization/downmix tests: **PASS**.
-- 60-second simulated phone using real TLS/WebSocket → VB-CABLE capture:
-  3,000 packets, zero buffer underruns, dropped samples, or playback callback errors;
-  expected tone detected in all 119 analysis windows: **PASS**.
-- Windows receiver reachable from WSL, with certificate verification enabled:
-  authenticated status endpoint rejects anonymous access (401), public CA downloads (200).
-
-- User verified actual Android Chrome capture over Wi-Fi and clear speech in a
-  Windows recording app: **PASS**, without installing the development CA.
-
-**Still needs verification:** measured end-to-end latency, longer-session Wi-Fi
-stability, and the new QR-pairing UI. Screen-off/background capture is verified
-for the earlier native version, not supported by the browser version.
-The simulated test runs on the PC and is not a substitute for phone testing.
-
-## Setup / run
-
-Prerequisites: WSL Bash/OpenSSL, Windows Python 3.10 and Windows `uv`, and VB-CABLE.
-All Windows audio code runs under Windows Python, not WSL Python.
+From WSL:
 
 ```sh
 cd ~/phone-mic
-./setup.sh                         # Windows uv environment + dependencies
-./run.sh check                     # Windows cable-only hardware test
-./make-cert.sh WINDOWS_LAN_IP      # once; private local CA and server certificate
-./run.sh serve                     # auto-detect Windows LAN IP; Ctrl+C to stop
+./run.sh serve
 ```
+
+The receiver detects your Windows LAN address and opens **`.local/connect.html`**
+in your Windows browser. If it cannot open the page, open that file manually.
+Leave the terminal open; **Ctrl+C** stops the receiver.
+
+On your phone, open Phone Mic and tap **Start microphone**. If not paired yet,
+follow the setup page: install once, scan its pairing QR **inside Phone Mic**,
+then confirm **Pair & start microphone**. Allow microphone access; capture
+continues automatically without a second Start tap. Scanning alone does not
+start recording. Notifications are optional but recommended for the Stop action.
+
+Speak: the phone meter should move, and the PC page should show audio arriving
+and being sent to the virtual cable. In your Windows app, choose:
+
+**CABLE Output (VB-Audio Virtual Cable)**
+
+Check **that app’s** microphone meter too. The receiver cannot verify which
+microphone another app selected. While streaming, you can lock your phone.
+Tap **Stop microphone** on the phone or **Stop** in its notification to finish.
+
+Running `./run.sh` without arguments (or with `--help`) shows instructions without
+starting tests, opening audio devices, or changing certificates.
+
+## First-time PC setup
+
+Prerequisites: WSL Bash/Python 3/OpenSSL, Windows Python 3.10 and Windows `uv`,
+and [VB-CABLE](https://vb-audio.com/Cable/). Windows audio runs under **Windows
+Python**, not WSL Python. Android 11 or newer is required for the native app.
+
+1. Install VB-CABLE on a **Windows-local disk**, run its x64 installer as
+   administrator, and reboot if requested. Installing from the WSL share failed
+   on the original test machine; a Windows-local copy worked.
+2. Run `./setup.sh` to create the Windows environment and dependencies.
+3. Run `./run.sh check` to verify the virtual cable with a generated tone.
+4. Build the reusable app if not already present: `./android/build.sh`
+   (first run: `./android/bootstrap-tools.sh`). See [Android docs](android/README.md).
+5. Run `./run.sh serve`. Missing certificates are created automatically.
+6. If the phone cannot reach the PC, run `./run.sh doctor`. If needed, run
+   `allow-firewall.ps1 -Ip WINDOWS_LAN_IP` from Windows PowerShell using its full
+   WSL path. It asks for administrator approval and permits TCP 8764/8765 only on
+   that local IP from `LocalSubnet`, including Public network profiles.
+   **Do not disable the firewall or open the dashboard port.**
+
+The page’s install QR uses the phone’s **normal camera/browser**. Download the
+APK, then open it and tap Install; downloading alone does not install it. Android
+may require allowing the browser to install unknown apps; revoke that permission
+afterward. A development HTTPS warning may appear; verify the address is your
+PC, or transfer `.local/phone-mic-debug.apk` by USB instead.
+The app is debug-signed, reusable, and contains no PC credentials.
+
+## Networking and certificates
 
 `serve` detects connected physical Windows Wi-Fi/Ethernet adapters with a default
-gateway (not WSL/Hyper-V/VPN adapters). If multiple addresses are available, it
-asks which network your phone shares. Without an interactive terminal it lists
-the choices and exits. You can always override detection with
-`./run.sh serve WINDOWS_LAN_IP`, including for networks without a default gateway.
-Flags also work without an IP, e.g. `./run.sh serve --reset-pairing`.
-Detection does not change certificates or firewall rules; those must still match
-the chosen address. If the address changes, renew the certificate and re-pair.
-
-The receiver binds only that LAN address: HTTPS on TCP 8765, public certificate
-download on HTTP 8764. It does not change default microphones, record audio to
-disk, or send it to internet services. Only one phone may stream at once.
-
-### Windows Firewall
-
-From Windows PowerShell, run `allow-firewall.ps1 -Ip WINDOWS_LAN_IP` using its
-full WSL path if necessary. It requests administrator approval and permits only
-TCP 8764/8765 on the selected local IP from `LocalSubnet`. The rule supports
-Public Wi-Fi profiles but does **not** permit arbitrary internet sources.
-No need to change the network profile or disable the firewall.
-
-### Connect Android (native app)
-
-Open the private `.local/connect.html` on the Windows desktop:
-
-1. Install/update the reusable Android APK using its first QR/download link, or
-   transfer `.local/phone-mic-debug.apk` over USB. No credentials are built in.
-2. Open Phone Mic → **Scan pairing QR**; grant camera access and scan the second
-   QR on the PC. Compare receiver address/certificate fingerprint, then **Pair**.
-3. Tap **Start** (grant microphone permission if requested), then select
-   **CABLE Output (VB-Audio Virtual Cable)** in the intended Windows app.
-
-No CA installation. Pairing is saved privately on the phone and survives restarts.
-If the PC address, credential or certificate changes, scan its new QR—no APK
-rebuild. The development leaf certificate lasts 14 days; renew then re-pair.
-The app never starts recording merely from scanning. See [Android docs](android/README.md)
-for security boundaries, build instructions and remaining real-device checks.
-
-### Legacy browser prototype
-
-The setup page's collapsed browser section links to the token-bearing microphone
-page. Keep it visible during capture; browser screen-off capture is unsupported.
-Stop browser capture before starting the native app.
-
-**Permission gotcha:** Chrome's `ERR_TOO_MANY_RETRIES` occurred before any request
-reached Windows. Granting Chrome **Nearby devices / Local network** permission
-resolved it. Check this before changing firewall rules; labels vary by Android.
-
-User-verified browser capture worked without installing the development CA.
-Do not install it by default: it broadens phone trust. Browser handling of
-self-signed TLS varies; capture requires a secure context. Optional public CA
-information remains in the collapsed section for legacy testing only. Never
-share `.local/ca.key`. Native audio uses only its scanned certificate pin.
-
-Pairing persists in `.local/pairing.json` across receiver and PC restarts.
-On upgrade, the receiver adopts the existing `connection.json` token so the
-installed APK keeps working without rebuilding. `--reuse-session` is now an
-optional compatibility flag; reuse is the default. Do not delete `.local/`.
-
-To deliberately revoke paired phones/browser links, stop the receiver and run
-`./run.sh serve WINDOWS_LAN_IP --reset-pairing`. This is the only normal startup
-option that rotates the token; re-scan the new pairing QR on retained phones.
-Old pre-QR APK versions would need updating. Corrupt saved credentials fail closed instead of silently rotating.
-The receiver must still be started after a PC reboot, and the app started manually;
-this change does not add autostart or reconnect.
-
-`pairing.json`, `connection.json`, and `connect.html` contain secrets. Do not
-share them. Old pre-QR APKs also contain secrets; the new APK does not.
-Certificates, tokens, logs, generated setup pages,
-environments and third-party binaries are all git-ignored.
-
-## Testing
+gateway, excluding virtual WSL/Hyper-V/VPN adapters. With multiple choices it asks
+which network your phone shares. Without an interactive terminal it lists the
+choices and exits. Override at any time:
 
 ```sh
-./run.sh test                     # 27 Python tests; no physical microphone needed
-python3 -m unittest test_run_sh -v # WSL launcher/detection tests (mock Windows commands)
-node --test web/capture.test.cjs  # AudioWorklet packetization tests
-./run.sh list                     # Windows endpoints
-./run.sh check                    # actual cable-only test
-./run.sh network-test             # 8 seconds through running HTTPS receiver
+./run.sh serve WINDOWS_LAN_IP
 ```
 
-The network test uses `.local/connection.json` and verifies TLS against the local
-CA. It captures the virtual microphone in memory, not a physical microphone,
-and writes no recording. Do not run it while the phone is connected.
+The receiver binds only that address: HTTPS audio on **8765**, public legacy CA
+download on **8764**. The PC dashboard listens only on **127.0.0.1:8766** and uses
+authenticated status requests; it is not accessible from your phone. Its token
+stays in the URL fragment and Bearer header, not access logs. No CORS is enabled.
+The setup file embeds this local dashboard and explains what to do when offline.
 
-## Wire protocol / buffering
+Startup checks the certificate/key, address match, ports and both cable endpoints
+before announcing readiness. A missing APK is a warning, not a blocker for phones
+that already have the app installed.
 
-- Secure WebSocket `/audio?token=...`; rejects invalid tokens and cross-origin
-  browser requests. The page reads its token from the URL fragment.
-- First text frame:
-  `{"type":"start","sampleRate":48000,"channels":1,"format":"f32le"}`
-- Server replies `{"type":"ready"}`. Each following binary frame contains
-  exactly 960 mono little-endian float32 samples: 3,840 bytes / 20 ms.
-- Server validates length and finite values, clips to [-1, 1], and duplicates
-  mono to the cable's two output channels. The browser requests a 48 kHz
-  AudioContext and explicitly errors if unsupported; Web Audio handles the
-  physical microphone's input sample-rate conversion.
-- Jitter buffer primes at 60 ms; maximum 200 ms. Old samples are discarded
-  rather than allowing unbounded latency. On underflow it emits silence and
-  re-primes. Browser send buffering is bounded too.
-- Five seconds without audio closes the session. Disconnect clears buffered
-  audio. Reconnection is explicit using Start; only one producer is accepted.
-- Buffer/gap/drop/device-error counters appear on the phone once per second.
-- Native Android can use the same protocol later. No custom audio driver needed.
+**Certificate maintenance is automatic during `serve`:** a missing, expired, or
+wrong-address server certificate is created/renewed with a **3-year lifetime**.
+An existing local CA and pairing token are preserved. Valid matching certificates
+are unchanged, so ordinary restarts do not require re-pairing. Renewal prints a
+notice: **scan the updated pairing QR**. An incomplete/corrupt CA fails safely
+instead of replacing it. Keep your PC/phone clocks correct.
 
-## VB-CABLE
+The phone shows the saved certificate expiration even while disconnected. New
+QRs carry an informational expiry date; a successful pinned TLS connection updates
+it from the actual certificate. Older QRs remain supported. Expiry/pin/hostname
+checks are never bypassed. The native app does not need a phone-wide CA install.
+A legacy development CA may have a shorter lifetime than the new leaf; the native
+app trusts the exact leaf, not that CA. Browser/CA-based clients may still reject
+that chain and are not the recommended path.
 
-Third-party driver from VB-Audio, not code implemented here:
-https://vb-audio.com/Cable/
+After renewal/address changes, reopen the **current** `.local/connect.html`;
+an already-open tab may show an older QR. Address changes can also require an
+updated scoped firewall rule.
 
-Official package downloaded separately:
-https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack45.zip
+## When something goes wrong
 
-Installer Authenticode check: Valid, signed by BUREL VINCENT Entrepreneur
-individuel. Extract onto a **Windows-local disk**, run `VBCABLE_Setup_x64.exe`
-as administrator, and reboot as requested. Installing directly from the WSL
-share failed on this machine; the Windows-local copy succeeded.
+The phone offers a recovery action, not just an exception name:
 
-Endpoint names are counterintuitive:
-- **CABLE Input** is the playback endpoint the receiver writes into.
-- **CABLE Output** is the recording endpoint Windows apps select as microphone.
+- **Certificate expired:** run `./run.sh serve`, reopen the setup file, re-scan.
+- **PC identity changed:** verify this is your PC and scan its current QR.
+- **Pairing no longer valid:** scan again; no APK reinstall needed.
+- **Receiver busy:** stop another phone/browser capture, then retry.
+- **PC unreachable:** leave the receiver running; check shared Wi-Fi, guest
+  network isolation, VPN and firewall. Run `./run.sh doctor`.
+- **Permission denied:** use the permission prompt or Phone Mic → Settings & help
+  → Android app permissions.
+- **Audio arrives but Windows app is silent:** select CABLE Output, unmute the
+  app, check its permission/input meter. `./run.sh check` tests the cable alone.
 
-VB-CABLE is donationware; keep it identifiable and respect vendor licensing.
-`vendor/` is not committed or bundled as part of this project's installer.
+Phone **Settings & help** contains re-pairing, Forget receiver, connection help
+and technical diagnostics. Forget removes pairing only from that phone; it does
+not revoke other devices.
 
-## Environment notes / cleanup
+## Privacy and pairing
 
-`setup.sh` uses Windows `uv venv` / `uv pip install`. Windows uv uses `Lib` while
-Python 3.10's site lookup uses `lib`; on the case-sensitive WSL share the setup
-script merges generated `Lib` contents into lowercase `lib` so imports work.
-Do not run setup while the receiver is running.
+Only one phone/browser may stream at once. No default microphone is changed, no
+audio is written to disk, and no audio is uploaded to internet services. Pairing
+survives phone/receiver restarts. The receiver and microphone must be started
+manually; there is no boot autostart or automatic reconnect.
 
-To clean up: stop the receiver, remove the CA from Android's user credentials,
-and remove our firewall rule in elevated PowerShell:
+`.local/connect.html`, `connection.json`, `pairing.json`, and screenshots of the
+QRs contain credentials. **Do not share them.** Never share `.local/ca.key`.
+The APK itself contains no credentials (old pre-QR versions did).
 
-```powershell
-Remove-NetFirewallRule -Name 'PhoneMic-Dev-WINDOWS_LAN_IP'
+To revoke **all** paired phones/browser links, stop the receiver and run:
+
+```sh
+./run.sh serve --reset-pairing
 ```
 
-Remove `.local/` only when done with its certificates. Do not delete/recreate
-its CA while the phone still trusts the old one without removing that trust.
+Then scan the new QR on retained phones. Normal startup reuses the secret and
+adopts legacy `connection.json` credentials on upgrade. `--reuse-session` remains
+a compatibility flag; persistence is the default. Corrupt saved credentials fail
+closed instead of silently rotating. Do not delete `.local/` to troubleshoot.
+
+## Browser alternative
+
+The setup page has a collapsed alternative browser link. Keep the page visible
+and screen awake; screen-off capture is **not supported**. Stop it before using
+the native app. Browser TLS handling varies; prefer the native app rather than
+installing a development CA, which broadens phone trust.
+
+On the original phone, Chrome’s `ERR_TOO_MANY_RETRIES` was resolved by granting
+Chrome Nearby devices / Local network permission. Labels vary by Android.
+
+## Development and verification
+
+```sh
+./run.sh test                         # Windows Python tests; no physical mic
+python3 -m unittest test_run_sh test_certificates -v  # WSL launcher/OpenSSL tests
+node --test web/*.test.cjs            # worklet and dashboard tests
+./android/build.sh                   # JVM/Robolectric tests, lint, APK + secret audit
+./run.sh list                        # Windows audio endpoints
+./run.sh check                       # actual cable hardware test
+./run.sh network-test                # 8 s through a running receiver; stop phone first
+```
+
+Wire protocol: authenticated TLS WebSocket `/audio?token=...`; first frame
+`{"type":"start","sampleRate":48000,"channels":1,"format":"f32le"}`; reply
+`{"type":"ready"}`; then 960 mono f32le samples / 3,840 bytes every 20 ms. Mono
+is duplicated to the two cable channels. Buffer primes at 60 ms, is bounded at
+200 ms, and discards old samples rather than allowing unbounded latency. Invalid
+packets/non-finite samples are rejected. Five seconds without audio closes the
+session. Reconnection is explicit; Stop clears buffered audio.
+
+Previously user-verified: live Android/browser dictation and native screen-off
+capture. A 60-second simulated TLS/WebSocket → cable test passed with no drops,
+underruns or callback errors. These are historical results, not proof that the
+new UI has been verified on a real phone. Current automated checks and remaining
+real-device acceptance are described in [Android docs](android/README.md).
+Measured latency and longer Wi-Fi stability remain unverified.
+
+## Environment and cleanup
+
+Windows `uv` uses `Lib`; Python 3.10 looks in `lib`. `setup.sh` merges these on
+the case-sensitive WSL share. Do not run setup while the receiver runs.
+Certificates, tokens, environments, generated pages, logs and vendor binaries
+are git-ignored. VB-CABLE is third-party donationware, not bundled project code.
+
+To remove the firewall rule, use elevated Windows PowerShell:
+`Remove-NetFirewallRule -Name 'PhoneMic-Dev-WINDOWS_LAN_IP'`.
+If you previously installed a development CA on Android, remove it from user
+credentials when done. Remove `.local/` only when intentionally discarding
+pairing and certificates; do not silently recreate a CA still trusted by a phone.

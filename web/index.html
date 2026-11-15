@@ -13,10 +13,11 @@
 </head>
 <body>
   <h1>Phone → Windows microphone</h1>
-  <p id="status">Ready to connect</p>
+  <p>Browser alternative: keep this page visible and your screen on. For screen-off use, install the Android app from your PC’s setup page.</p>
+  <p id="status" role="status" aria-live="polite">Ready — tap Start mic and allow microphone access</p>
   <button id="start">Start mic</button><button id="stop" disabled>Stop</button>
   <p><meter id="level" min="0" max="1" value="0"></meter></p>
-  <pre id="stats"></pre>
+  <details><summary>Diagnostics</summary><pre id="stats"></pre></details>
   <p class="note">Keep this page visible and the screen awake. We request a screen wake lock when supported. No audio is recorded or uploaded to the internet.</p>
   <p class="note">In your Windows app, choose <strong>CABLE Output (VB-Audio Virtual Cable)</strong> as the microphone.</p>
   <p><a id="android" hidden>Download Android app (QR pairing)</a></p>

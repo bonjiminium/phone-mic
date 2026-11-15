@@ -15,6 +15,7 @@ class LauncherTests(unittest.TestCase):
         bin_dir = Path(self.temp.name)
         scripts = {
             'wslpath': '#!/bin/sh\nprintf "C:\\\\phone-mic\\n"\n',
+            'python3': '#!/bin/sh\nexit "${TEST_CERT_EXIT:-0}"\n',
             'powershell.exe': '''#!/bin/sh
 case "$*" in
   *lan-addresses.ps1*)
@@ -36,21 +37,29 @@ esac
         return subprocess.run(['bash', self.script, *args], env=self.env,
                               stdin=subprocess.DEVNULL, capture_output=True, text=True)
 
+    def test_help_has_no_windows_side_effects(self):
+        for args in [(), ('help',), ('--help',)]:
+            result = self.run_launcher(*args)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('./run.sh serve', result.stdout)
+            self.assertIn('.local/connect.html', result.stdout)
+            self.assertNotIn('LAUNCH:', result.stdout)
+
     def test_auto_detect(self):
         result = self.run_launcher('serve')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('receiver.py --host 192.168.1.20', result.stdout)
+        self.assertIn('receiver.py --host 192.168.1.20 --open-page', result.stdout)
 
     def test_explicit_override_skips_detection(self):
         self.env['TEST_DETECT_EXIT'] = '1'
         result = self.run_launcher('serve', '10.0.0.4', '--reuse-session')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('receiver.py --host 10.0.0.4 --reuse-session', result.stdout)
+        self.assertIn('receiver.py --host 10.0.0.4 --open-page --reuse-session', result.stdout)
 
     def test_flag_without_ip(self):
         result = self.run_launcher('serve', '--reset-pairing')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('receiver.py --host 192.168.1.20 --reset-pairing', result.stdout)
+        self.assertIn('receiver.py --host 192.168.1.20 --open-page --reset-pairing', result.stdout)
 
     def test_no_candidates(self):
         self.env['TEST_ADDRESSES'] = '\r\n'
@@ -58,6 +67,18 @@ esac
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('No Windows LAN address', result.stderr)
         self.assertNotIn('LAUNCH:', result.stdout)
+
+    def test_certificate_failure_does_not_launch_receiver(self):
+        self.env['TEST_CERT_EXIT'] = '1'
+        result = self.run_launcher('serve')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn('LAUNCH:', result.stdout)
+
+    def test_doctor_shows_copyable_firewall_command_without_changing_rules(self):
+        result = self.run_launcher('doctor')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('allow-firewall.ps1" -Ip 192.168.1.20', result.stdout)
+        self.assertIn('receiver.py --doctor', result.stdout)
 
     def test_detection_failure(self):
         self.env['TEST_DETECT_EXIT'] = '1'

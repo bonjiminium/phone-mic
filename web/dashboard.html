@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Phone Mic live receiver status</title>
+<style>body{font:17px system-ui;margin:1rem;color:#182330}meter{display:block;width:100%;height:1.8rem}p{margin:.6rem 0}pre{white-space:pre-wrap;font-size:.8rem}#state{font-weight:bold}</style>
+<script src="/dashboard.js" defer></script></head><body>
+<p id="state" role="status" aria-live="polite">Checking receiver…</p>
+<label>Audio arriving from phone <meter id="input" min="0" max="1" value="0"></meter></label>
+<label>Audio sent to virtual cable <meter id="output" min="0" max="1" value="0"></meter></label>
+<p id="hint">Speak into your phone to test.</p>
+<details><summary>Diagnostics</summary><pre id="details"></pre></details>
+</body></html>

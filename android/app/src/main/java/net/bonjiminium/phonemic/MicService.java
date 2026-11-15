@@ -31,7 +31,10 @@ import org.json.JSONObject;
 
 public final class MicService extends Service {
     public static volatile boolean running = false;
-    public static volatile String status = "Stopped";
+    public static volatile String status = "Ready when you are";
+    public static volatile String phase = "stopped", recovery = "retry", diagnostics = "";
+    public static volatile float level = 0;
+    public static volatile long lastAcknowledgedAt = 0, verifiedExpiresAt = 0;
     private static final String CHANNEL = "microphone";
     private static final int NOTIFICATION = 1;
     private final AtomicBoolean ending = new AtomicBoolean(false);
@@ -60,17 +63,24 @@ public final class MicService extends Service {
             }
             NotificationManager manager = getSystemService(NotificationManager.class);
             manager.createNotificationChannel(new NotificationChannel(CHANNEL, "Microphone streaming", NotificationManager.IMPORTANCE_LOW));
+            phase = "connecting";
             startForeground(NOTIFICATION, notification("Connecting…"), ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
             running = true;
-            status = "Connecting to pinned Windows receiver…";
+            recovery = "retry";
+            diagnostics = "";
+            level = 0;
+            lastAcknowledgedAt = 0;
+            verifiedExpiresAt = 0;
+            status = "Connecting to your Windows PC…";
             wake = getSystemService(PowerManager.class).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "PhoneMic:Streaming");
             wake.acquire();
             connect();
             handler.postDelayed(() -> {
-                if (!capturing.get()) finish("Connection/handshake timed out. Check the Windows receiver.");
+                if (!capturing.get()) finish("Connection timed out. Leave ./run.sh serve running on the PC and check both devices share a network.");
             }, 10000);
         } catch (Exception e) {
-            finish("Start failed: " + e.getClass().getSimpleName());
+            diagnostics = "Start: " + e.getClass().getSimpleName();
+            finish("Could not start microphone. Check microphone permission in Android app settings, then retry.");
         }
         // Never restart recording automatically after a process kill.
         return START_NOT_STICKY;
@@ -97,6 +107,15 @@ public final class MicService extends Service {
         socket = client.newWebSocket(request, new WebSocketListener() {
             @Override public void onOpen(WebSocket ws, Response response) {
                 if (ending.get()) { ws.close(1000, "Stopped"); return; }
+                // TLS and hostname verification have completed before onOpen.
+                try {
+                    java.security.cert.X509Certificate cert = (java.security.cert.X509Certificate)
+                            response.handshake().peerCertificates().get(0);
+                    verifiedExpiresAt = cert.getNotAfter().getTime();
+                    new PairingStore(getNoBackupFilesDir().toPath()).save(config.withVerifiedExpiry(verifiedExpiresAt));
+                } catch (Exception e) {
+                    diagnostics = "Could not save verified certificate expiry";
+                }
                 ws.send("{\"type\":\"start\",\"sampleRate\":48000,\"channels\":1,\"format\":\"f32le\"}");
             }
 
@@ -107,12 +126,14 @@ public final class MicService extends Service {
                     if ("ready".equals(data.optString("type")) && capturing.compareAndSet(false, true)) {
                         new Thread(() -> capture(ws), "phone-mic-capture").start();
                     } else if ("stats".equals(data.optString("type"))) {
-                        status = "Streaming — screen may be locked\nPackets: " + packets
+                        lastAcknowledgedAt = System.currentTimeMillis();
+                        status = "Microphone live — PC is receiving audio";
+                        diagnostics = "Packets sent: " + packets
                                 + "\nReceiver buffer: " + data.optDouble("queued_ms") + " ms"
-                                + "\nGaps: " + data.optInt("underruns")
-                                + "  Dropped samples: " + data.optInt("dropped_samples")
-                                + "  Device errors: " + data.optInt("callback_errors");
-                        getSystemService(NotificationManager.class).notify(NOTIFICATION, notification("Streaming — " + packets + " packets"));
+                                + "\nAudio gaps: " + data.optInt("underruns")
+                                + "\nDropped samples: " + data.optInt("dropped_samples")
+                                + "\nDevice errors: " + data.optInt("callback_errors");
+                        getSystemService(NotificationManager.class).notify(NOTIFICATION, notification("Live — PC receiving audio. You can lock your phone."));
                     }
                 } catch (Exception e) {
                     finish("Receiver sent an invalid response");
@@ -120,22 +141,23 @@ public final class MicService extends Service {
             }
 
             @Override public void onFailure(WebSocket ws, Throwable error, Response response) {
-                if (response != null && response.code() == 409) {
-                    finish("Receiver busy. Stop the browser microphone, then tap Start again.");
-                } else if (response != null && response.code() == 401) {
-                    finish("Pairing no longer matches. Stop and scan the receiver's current pairing QR.");
-                } else {
-                    finish("Connection failed: " + error.getClass().getSimpleName() + ". Check Wi-Fi and receiver. If its address/certificate changed, scan its new pairing QR.");
-                }
+                if (ending.get()) return;
+                ConnectionFailure failure = ConnectionFailure.classify(error, response == null ? 0 : response.code());
+                recovery = failure.action;
+                diagnostics = "Connection: " + error.getClass().getSimpleName()
+                        + (response == null ? "" : " (HTTP " + response.code() + ")");
+                finish(failure.message);
             }
 
             @Override public void onClosing(WebSocket ws, int code, String reason) {
                 ws.close(code, null);
-                finish("Receiver closed the connection (" + code + ")");
+                diagnostics = "Receiver close code: " + code;
+                finish(code == 1008 ? "Receiver rejected the audio format. Update Phone Mic from your PC’s setup page, then retry."
+                        : "The PC closed the connection. Leave ./run.sh serve running, then tap Retry microphone.");
             }
 
             @Override public void onClosed(WebSocket ws, int code, String reason) {
-                finish("Connection closed (" + code + ")");
+                finish("Connection closed. Leave ./run.sh serve running on the PC, then tap Retry microphone.");
             }
         });
     }
@@ -159,7 +181,9 @@ public final class MicService extends Service {
             if (audio.getState() != AudioRecord.STATE_INITIALIZED) throw new IllegalStateException("Capture not initialized");
             audio.startRecording();
             if (audio.getRecordingState() != AudioRecord.RECORDSTATE_RECORDING) throw new IllegalStateException("Capture did not start");
-            status = "Streaming — try speaking, then lock the screen";
+            phase = "streaming";
+            status = "Microphone capturing — waiting for PC acknowledgement";
+            getSystemService(NotificationManager.class).notify(NOTIFICATION, notification("Microphone capturing — waiting for PC"));
             short[] pcm = new short[AudioPacket.SAMPLES];
             int used = 0;
             while (!ending.get()) {
@@ -177,11 +201,17 @@ public final class MicService extends Service {
                     finish("Audio connection closed");
                     break;
                 }
+                double sum = 0;
+                for (short sample : pcm) { double value = sample / 32768.0; sum += value * value; }
+                level = (float) Math.min(1, Math.sqrt(sum / pcm.length) * 4);
                 packets++;
                 used = 0;
             }
         } catch (RuntimeException e) {
-            if (!ending.get()) finish("Microphone failed: " + e.getClass().getSimpleName());
+            if (!ending.get()) {
+                diagnostics = "Microphone: " + e.getClass().getSimpleName();
+                finish("Could not capture microphone audio. Check Android microphone access and close other recording apps, then retry.");
+            }
         } finally {
             if (audio != null) {
                 try { audio.stop(); } catch (IllegalStateException ignored) {}
@@ -195,7 +225,7 @@ public final class MicService extends Service {
         PendingIntent open = PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class), PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         PendingIntent stop = PendingIntent.getService(this, 1, new Intent(this, MicService.class).setAction("STOP"), PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         return new Notification.Builder(this, CHANNEL).setSmallIcon(android.R.drawable.ic_btn_speak_now)
-                .setContentTitle("Phone microphone active").setContentText(message)
+                .setContentTitle("Phone Mic — " + ("streaming".equals(phase) ? "microphone live" : "connecting")).setContentText(message)
                 .setContentIntent(open).setOngoing(true)
                 .addAction(new Notification.Action.Builder(null, "Stop", stop).build()).build();
     }
@@ -203,13 +233,19 @@ public final class MicService extends Service {
     private void finish(String message) {
         if (ending.compareAndSet(false, true)) {
             status = message;
+            phase = "Stopped".equals(message) ? "stopped" : "error";
+            level = 0;
             running = false;
             stopSelf();
         }
     }
 
     @Override public void onDestroy() {
-        if (ending.compareAndSet(false, true)) status = "Stopped";
+        if (ending.compareAndSet(false, true)) {
+            status = "Stopped";
+            phase = "stopped";
+        }
+        level = 0;
         running = false;
         handler.removeCallbacksAndMessages(null);
         AudioRecord audio = recorder;

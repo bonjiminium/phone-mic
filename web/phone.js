@@ -50,9 +50,9 @@ startButton.onclick = async () => {
   status.textContent = 'Requesting microphone…';
   try {
     if (!isSecureContext || !navigator.mediaDevices?.getUserMedia) {
-      throw new Error('HTTPS is not trusted. Install the local CA certificate, then reopen this page.');
+      throw new Error('This browser cannot securely access the microphone here. Use the Android app from your PC’s .local/connect.html setup page; no CA installation is needed.');
     }
-    if (!token) throw new Error('Open the full phone URL, including the # connection token.');
+    if (!token) throw new Error('This link is incomplete. Open the browser microphone link from your PC’s current .local/connect.html setup page.');
     session.context = new AudioContext({sampleRate: 48000, latencyHint: 'interactive'});
     await session.context.resume();
     session.media = await navigator.mediaDevices.getUserMedia({audio: {
@@ -72,7 +72,7 @@ startButton.onclick = async () => {
     await new Promise((resolve, reject) => {
       session.timeout = setTimeout(() => reject(new Error('Connection timed out')), 10000);
       ws.onopen = () => ws.send(JSON.stringify({type: 'start', sampleRate: 48000, channels: 1, format: 'f32le'}));
-      ws.onerror = () => reject(new Error('Cannot reach Windows receiver'));
+      ws.onerror = () => reject(new Error('Cannot reach the PC securely. Leave ./run.sh serve running, check both devices share a network, or use the Android app for clearer certificate diagnostics.'));
       ws.onclose = () => reject(new Error('Connection refused or closed; another phone may be connected'));
       ws.onmessage = event => {
         if (JSON.parse(event.data).type === 'ready') {
@@ -115,7 +115,9 @@ startButton.onclick = async () => {
     await wake(session);
     if (current === session) status.textContent = 'Streaming to Windows';
   } catch (error) {
-    if (current === session) await stop(error.message);
+    if (current === session) await stop(error.name === 'NotAllowedError' ?
+      'Microphone permission was denied. Allow microphone access in this browser’s site settings, then tap Start mic.' :
+      error.name === 'NotFoundError' ? 'No microphone is available. Check your phone’s microphone access.' : error.message);
   }
 };
 stopButton.onclick = () => stop();

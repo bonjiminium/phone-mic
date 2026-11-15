@@ -22,6 +22,17 @@ public class PairingConfigTest {
         assertEquals("https://pc.local", example("https://PC.local").serverUrl);
     }
 
+    @Test public void expiryIsOptionalValidatedAndRoundTrips() throws Exception {
+        PairingConfig old = example("https://pc.local");
+        assertEquals(0, old.certificateExpiresAt);
+        PairingConfig verified = old.withVerifiedExpiry(1900000000000L);
+        assertEquals(1900000000000L, PairingConfig.parse(verified.serialize()).certificateExpiresAt);
+        for (Object value : new Object[]{"tomorrow", -1, 0, 1.5, JSONObject.NULL}) {
+            String text = new JSONObject(old.serialize()).put("certificateExpiresAt", value).toString();
+            assertThrows(IllegalArgumentException.class, () -> PairingConfig.parse(text));
+        }
+    }
+
     @Test public void unsafeOriginsAreRejected() throws Exception {
         for (String origin : new String[] {"http://pc.local", "wss://pc.local", "file:///tmp/test", "https://user:pass@pc.local",
                 "https://pc.local/audio", "https://pc.local/?token=foo", "https://pc.local/#secret",
