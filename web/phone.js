@@ -12,6 +12,12 @@ if (token) {
 }
 let current = null;
 
+// Display only: -60..0 dBFS. Audio samples and transmitted volume are unchanged.
+function meterLevel(rms) {
+  if (!Number.isFinite(rms) || rms <= 0) return 0;
+  return Math.max(0, Math.min(1, (20 * Math.log10(rms) + 60) / 60));
+}
+
 async function stop(message = 'Stopped') {
   const session = current;
   current = null;
@@ -101,7 +107,7 @@ startButton.onclick = async () => {
       const samples = new Float32Array(event.data);
       let sum = 0;
       for (const sample of samples) sum += sample * sample;
-      level.value = Math.min(1, Math.sqrt(sum / samples.length) * 4);
+      level.value = meterLevel(Math.sqrt(sum / samples.length));
     };
     session.source.connect(session.node);
     // Worklet emits silence; this keeps capture processing active without feedback.

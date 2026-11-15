@@ -1,5 +1,6 @@
 """Bounded mono 48 kHz float32 jitter buffer shared by WS and audio threads."""
 from collections import deque
+import math
 from threading import Lock
 
 import numpy as np
@@ -7,6 +8,13 @@ import numpy as np
 RATE = 48000
 PACKET_SAMPLES = 960  # 20 ms
 PACKET_BYTES = PACKET_SAMPLES * 4
+
+
+def meter_level(rms):
+    """Display only: map -60..0 dBFS to 0..1 without changing any audio."""
+    if not math.isfinite(rms) or rms <= 0:
+        return 0.0
+    return max(0.0, min(1.0, (20 * math.log10(rms) + 60) / 60))
 
 
 def decode_packet(data):

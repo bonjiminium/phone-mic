@@ -66,7 +66,7 @@ class ReceiverTest(unittest.IsolatedAsyncioTestCase):
         response = await self.client.get('/status', headers={'Authorization': 'Bearer test-secret'})
         data = await response.json()
         self.assertTrue(data['receiving'])
-        self.assertAlmostEqual(data['level'], .4, places=4)
+        self.assertAlmostEqual(data['level'], 2/3, places=4)
         self.receiver.last_audio = time.monotonic() - 3
         response = await self.client.get('/status', headers={'Authorization': 'Bearer test-secret'})
         data = await response.json()

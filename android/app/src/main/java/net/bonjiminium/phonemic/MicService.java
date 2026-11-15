@@ -203,7 +203,7 @@ public final class MicService extends Service {
                 }
                 double sum = 0;
                 for (short sample : pcm) { double value = sample / 32768.0; sum += value * value; }
-                level = (float) Math.min(1, Math.sqrt(sum / pcm.length) * 4);
+                level = AudioLevel.fromRms(Math.sqrt(sum / pcm.length));
                 packets++;
                 used = 0;
             }

@@ -15,7 +15,7 @@ try:
     from aiohttp import web, WSMsgType
     import sounddevice as sd
     import numpy as np
-    from audio_buffer import AudioBuffer, decode_packet, RATE
+    from audio_buffer import AudioBuffer, decode_packet, meter_level, RATE
     from windows_audio import cable_device
     from connection_page import write_page
     from pairing import pairing_token, pairing_payload
@@ -98,7 +98,7 @@ class Receiver:
                 if msg.type != WSMsgType.BINARY:
                     raise ValueError('Expected binary audio packets')
                 samples = decode_packet(msg.data)
-                self.level = min(1.0, float(np.sqrt(np.mean(samples ** 2))) * 4)
+                self.level = meter_level(float(np.sqrt(np.mean(samples ** 2))))
                 self.last_audio = time.monotonic()
                 self.buffer.push(samples)
                 # Send lightweight metrics once a second; no audio is saved.
@@ -122,7 +122,7 @@ class Receiver:
 
         def playback(outdata, frames, timing, status):
             mono = self.buffer.read(frames, status=bool(status))
-            self.playback_level = min(1.0, float(np.sqrt(np.mean(mono ** 2))) * 4)
+            self.playback_level = meter_level(float(np.sqrt(np.mean(mono ** 2))))
             outdata[:, 0] = mono
             outdata[:, 1] = mono
 

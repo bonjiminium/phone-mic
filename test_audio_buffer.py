@@ -1,10 +1,16 @@
 import unittest
 import numpy as np
 
-from audio_buffer import AudioBuffer, decode_packet, PACKET_BYTES, PACKET_SAMPLES
+from audio_buffer import AudioBuffer, decode_packet, meter_level, PACKET_BYTES, PACKET_SAMPLES
 
 
 class BufferTest(unittest.TestCase):
+    def test_display_level_uses_decibels_without_changing_audio(self):
+        for rms, expected in [(0, 0), (.0001, 0), (.001, 0), (.01, 1/3),
+                              (.1, 2/3), (1, 1), (2, 1), (float('nan'), 0),
+                              (float('inf'), 0)]:
+            self.assertAlmostEqual(meter_level(rms), expected)
+
     def test_requires_prebuffer(self):
         b = AudioBuffer(prebuffer=6, capacity=12)
         b.push(np.ones(3))

@@ -89,7 +89,9 @@ phones. Per-device revocation is not implemented.
 PHONE_MIC_TEST_RECEIVER=1 ./android/build.sh  # optional running-receiver tests
 ```
 
-Output: `.local/phone-mic-debug.apk`, version **0.3.0-guided-setup**, versionCode 4.
+Output: `.local/phone-mic-debug.apk`, version **0.3.1-audio-meters**, versionCode 5.
+Phone, PC and browser meters use a -60 to 0 dBFS display scale so ordinary speech
+is visible. This is display-only: no gain or volume change is applied to the audio.
 Same application ID/debug signing key allows an in-place upgrade.
 
 Pinned tools in `~/.cache/phone-mic-android` (override `PHONE_MIC_TOOLS`): Azul JDK

@@ -19,8 +19,15 @@ async function start(options = {}) {
     window: {addEventListener() {}}, AudioContext, clearTimeout() {}};
   vm.runInNewContext(source, context);
   await elements['#start'].onclick();
-  return {elements, closed};
+  return {elements, closed, context};
 }
+test('meter uses the same decibel scale as Android and PC without boosting audio', async () => {
+  const {context} = await start();
+  for (const [rms, expected] of [[0, 0], [.0001, 0], [.001, 0], [.01, 1/3], [.1, 2/3], [1, 1], [2, 1], [NaN, 0], [Infinity, 0]]) {
+    assert.ok(Math.abs(context.meterLevel(rms) - expected) < .00001);
+  }
+});
+
 test('untrusted browser context recommends native app, not CA installation', async () => {
   const {elements} = await start({secure: false});
   assert.match(elements['#status'].textContent, /Android app/);
