@@ -36,8 +36,17 @@ cd ~/phone-mic
 ./setup.sh                         # Windows uv environment + dependencies
 ./run.sh check                     # Windows cable-only hardware test
 ./make-cert.sh WINDOWS_LAN_IP      # once; private local CA and server certificate
-./run.sh serve WINDOWS_LAN_IP      # foreground receiver; Ctrl+C to stop
+./run.sh serve                     # auto-detect Windows LAN IP; Ctrl+C to stop
 ```
+
+`serve` detects connected physical Windows Wi-Fi/Ethernet adapters with a default
+gateway (not WSL/Hyper-V/VPN adapters). If multiple addresses are available, it
+asks which network your phone shares. Without an interactive terminal it lists
+the choices and exits. You can always override detection with
+`./run.sh serve WINDOWS_LAN_IP`, including for networks without a default gateway.
+Flags also work without an IP, e.g. `./run.sh serve --reset-pairing`.
+Detection does not change certificates or firewall rules; those must still match
+the chosen address. If the address changes, renew the certificate and re-pair.
 
 The receiver binds only that LAN address: HTTPS on TCP 8765, public certificate
 download on HTTP 8764. It does not change default microphones, record audio to
@@ -105,6 +114,7 @@ environments and third-party binaries are all git-ignored.
 
 ```sh
 ./run.sh test                     # 27 Python tests; no physical microphone needed
+python3 -m unittest test_run_sh -v # WSL launcher/detection tests (mock Windows commands)
 node --test web/capture.test.cjs  # AudioWorklet packetization tests
 ./run.sh list                     # Windows endpoints
 ./run.sh check                    # actual cable-only test
